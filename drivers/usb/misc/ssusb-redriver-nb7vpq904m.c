@@ -85,6 +85,7 @@ struct ssusb_redriver {
 	struct i2c_client	*client;
 
 	int orientation_gpio;
+	bool orientation_gpio_enable;
 	enum plug_orientation typec_orientation;
 	enum operation_mode op_mode;
 
@@ -96,9 +97,6 @@ struct ssusb_redriver {
 	u8	output_comp[CHAN_MODE_NUM][CHANNEL_NUM];
 	u8	loss_match[CHAN_MODE_NUM][CHANNEL_NUM];
 	u8	flat_gain[CHAN_MODE_NUM][CHANNEL_NUM];
-
-	u8	gen_dev_val;
-	int	ucsi_i2c_write_err;
 
 	struct dentry	*debug_root;
 };
@@ -132,7 +130,7 @@ static int redriver_i2c_reg_set(struct ssusb_redriver *redriver,
 	return 0;
 }
 
-static int ssusb_redriver_gen_dev_set(struct ssusb_redriver *redriver)
+static void ssusb_redriver_gen_dev_set(struct ssusb_redriver *redriver)
 {
 	u8 val = 0;
 
@@ -190,9 +188,7 @@ static int ssusb_redriver_gen_dev_set(struct ssusb_redriver *redriver)
 		break;
 	}
 
-	redriver->gen_dev_val = val;
-
-	return redriver_i2c_reg_set(redriver, GEN_DEV_SET_REG, val);
+	redriver_i2c_reg_set(redriver, GEN_DEV_SET_REG, val);
 }
 
 static int ssusb_redriver_param_config(struct ssusb_redriver *redriver,
@@ -352,7 +348,7 @@ static int ssusb_redriver_channel_update(struct ssusb_redriver *redriver)
 	return 0;
 
 err:
-	dev_err(redriver->dev, "channel parameters update failure(%d).\n", ret);
+	dev_err(redriver->dev, "channel parameters update failure.\n");
 	return ret;
 }
 
@@ -402,15 +398,40 @@ err:
 
 static int ssusb_redriver_read_orientation(struct ssusb_redriver *redriver)
 {
+	struct device *dev = redriver->dev;
+	struct pinctrl *orientation_pinctrl;
+	struct pinctrl_state *gpio_state;
 	int ret;
 
-	if (!gpio_is_valid(redriver->orientation_gpio))
+	if (!redriver->orientation_gpio_enable)
 		return -EINVAL;
 
+	orientation_pinctrl = pinctrl_get(dev);
+	if (IS_ERR_OR_NULL(orientation_pinctrl)) {
+		dev_err(dev, "Failed to get pinctrl\n");
+		return -EINVAL;
+	}
+
+	gpio_state = pinctrl_lookup_state(orientation_pinctrl, "enable_gpio");
+	if (IS_ERR_OR_NULL(gpio_state)) {
+		dev_err(dev, "Failed to get gpio state\n");
+		ret = -ENODEV;
+		goto put_pinctrl;
+	}
+
+	ret = pinctrl_select_state(orientation_pinctrl, gpio_state);
+	if (ret) {
+		dev_err(redriver->dev, "fail to enable gpio state\n");
+		ret = -EINVAL;
+		goto put_pinctrl;
+	}
+
+	/* wait for some time ??? */
 	ret = gpio_get_value(redriver->orientation_gpio);
 	if (ret < 0) {
 		dev_err(redriver->dev, "fail to read gpio value\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto put_pinctrl;
 	}
 
 	if (ret == 0)
@@ -418,31 +439,13 @@ static int ssusb_redriver_read_orientation(struct ssusb_redriver *redriver)
 	else
 		redriver->typec_orientation = ORIENTATION_CC2;
 
-	return 0;
+	ret = 0;
+
+put_pinctrl:
+	pinctrl_put(orientation_pinctrl);
+
+	return ret;
 }
-
-int redriver_orientation_get(struct device_node *node)
-{
-	struct ssusb_redriver *redriver;
-	struct i2c_client *client;
-
-	if (!node)
-		return -ENODEV;
-
-	client = of_find_i2c_device_by_node(node);
-	if (!client)
-		return -ENODEV;
-
-	redriver = i2c_get_clientdata(client);
-	if (!redriver)
-		return -EINVAL;
-
-	if (!gpio_is_valid(redriver->orientation_gpio))
-		return -EINVAL;
-
-	return gpio_get_value(redriver->orientation_gpio);
-}
-EXPORT_SYMBOL(redriver_orientation_get);
 
 static int ssusb_redriver_ucsi_notifier(struct notifier_block *nb,
 		unsigned long action, void *data)
@@ -451,7 +454,6 @@ static int ssusb_redriver_ucsi_notifier(struct notifier_block *nb,
 			container_of(nb, struct ssusb_redriver, ucsi_nb);
 	struct ucsi_glink_constat_info *info = data;
 	enum operation_mode op_mode;
-	int ret;
 
 	if (info->connect && !info->partner_change)
 		return NOTIFY_DONE;
@@ -495,99 +497,11 @@ static int ssusb_redriver_ucsi_notifier(struct notifier_block *nb,
 			"CC1" : "CC2");
 	}
 
-	ret = ssusb_redriver_channel_update(redriver);
-	if (ret) {
-		dev_dbg(redriver->dev, "i2c bus may not resume(%d)\n", ret);
-		redriver->ucsi_i2c_write_err = ret;
-		return NOTIFY_DONE;
-	}
+	ssusb_redriver_channel_update(redriver);
 	ssusb_redriver_gen_dev_set(redriver);
 
 	return NOTIFY_OK;
 }
-
-int redriver_notify_connect(struct device_node *node)
-{
-	struct ssusb_redriver *redriver;
-	struct i2c_client *client;
-
-	if (!node)
-		return -ENODEV;
-
-	client = of_find_i2c_device_by_node(node);
-	if (!client)
-		return -ENODEV;
-
-	redriver = i2c_get_clientdata(client);
-	if (!redriver)
-		return -EINVAL;
-
-	/* 1. no operation in recovery mode.
-	 * 2. needed when usb related mode set.
-	 * 3. currently ucsi notification arrive to redriver earlier than usb,
-	 * in ucsi notification callback, save mode even i2c write failed,
-	 * but add ucsi_i2c_write_err to indicate i2c write error,
-	 * this allow usb trigger i2c write again by check it.
-	 * !!! if future remove ucsi, ucsi_i2c_write_err can be removed,
-	 * and this function also need update !!!.
-	 */
-	if ((redriver->op_mode == OP_MODE_DEFAULT) ||
-	    ((redriver->op_mode != OP_MODE_USB) &&
-	     (redriver->op_mode != OP_MODE_USB_AND_DP)) ||
-	    (!redriver->ucsi_i2c_write_err))
-		return 0;
-
-	dev_dbg(redriver->dev, "op mode %s\n",
-		OPMODESTR(redriver->op_mode));
-
-	/* !!! assume i2c resume complete here !!! */
-	ssusb_redriver_channel_update(redriver);
-	ssusb_redriver_gen_dev_set(redriver);
-
-	redriver->ucsi_i2c_write_err = 0;
-
-	return 0;
-}
-EXPORT_SYMBOL(redriver_notify_connect);
-
-int redriver_notify_disconnect(struct device_node *node)
-{
-	struct ssusb_redriver *redriver;
-	struct i2c_client *client;
-
-	if (!node)
-		return -ENODEV;
-
-	client = of_find_i2c_device_by_node(node);
-	if (!client)
-		return -ENODEV;
-
-	redriver = i2c_get_clientdata(client);
-	if (!redriver)
-		return -EINVAL;
-
-	/* 1. no operation in recovery mode.
-	 * 2. there is case for 4 lane display, first report usb mode,
-	 * second call usb release super speed lanes,
-	 * then stop usb host and call this disconnect,
-	 * it should not disable chip.
-	 * 3. if already disabled, no need to disable again.
-	 */
-	if ((redriver->op_mode == OP_MODE_DEFAULT) ||
-	    (redriver->op_mode == OP_MODE_DP) ||
-	    (redriver->op_mode == OP_MODE_NONE))
-		return 0;
-
-	dev_dbg(redriver->dev, "op mode %s -> %s\n",
-		OPMODESTR(redriver->op_mode), OPMODESTR(OP_MODE_NONE));
-
-	redriver->op_mode = OP_MODE_NONE;
-
-	ssusb_redriver_gen_dev_set(redriver);
-
-	return 0;
-}
-EXPORT_SYMBOL(redriver_notify_disconnect);
 
 int redriver_release_usb_lanes(struct device_node *node)
 {
@@ -595,15 +509,13 @@ int redriver_release_usb_lanes(struct device_node *node)
 	struct i2c_client *client;
 
 	if (!node)
-		return -ENODEV;
+		return -EINVAL;
 
 	client = of_find_i2c_device_by_node(node);
 	if (!client)
-		return -ENODEV;
+		return -EINVAL;
 
 	redriver = i2c_get_clientdata(client);
-	if (!redriver)
-		return -EINVAL;
 
 	if (redriver->op_mode == OP_MODE_DP)
 		return 0;
@@ -618,51 +530,15 @@ int redriver_release_usb_lanes(struct device_node *node)
 }
 EXPORT_SYMBOL(redriver_release_usb_lanes);
 
-/* NOTE: DO NOT change mode in this funciton */
-int redriver_gadget_pullup(struct device_node *node, int is_on)
-{
-	struct ssusb_redriver *redriver;
-	struct i2c_client *client;
-	u8 val;
-
-	if (!node)
-		return -ENODEV;
-
-	client = of_find_i2c_device_by_node(node);
-	if (!client)
-		return -ENODEV;
-
-	redriver = i2c_get_clientdata(client);
-	if (!redriver)
-		return -EINVAL;
-
-	/*
-	 * when redriver connect to a USB hub, and do adb root operation,
-	 * due to redriver rx termination detection issue,
-	 * hub will not detct device logical removal.
-	 * workaround to temp disable/enable redriver when usb pullup operation.
-	 */
-	if (redriver->op_mode != OP_MODE_USB)
-		return 0;
-
-	val = redriver->gen_dev_val;
-	if (!is_on)
-		val &= ~CHIP_EN;
-
-	redriver_i2c_reg_set(redriver, GEN_DEV_SET_REG, val);
-
-	return 0;
-}
-EXPORT_SYMBOL(redriver_gadget_pullup);
-
 static void ssusb_redriver_orientation_gpio_init(
 		struct ssusb_redriver *redriver)
 {
 	struct device *dev = redriver->dev;
 	int rc;
 
-	redriver->orientation_gpio = of_get_gpio(dev->of_node, 0);
-	if (!gpio_is_valid(redriver->orientation_gpio)) {
+	redriver->orientation_gpio =
+			of_get_named_gpio(dev->of_node, "orientation_gpio", 0);
+	if (redriver->orientation_gpio < 0) {
 		dev_err(dev, "Failed to get gpio\n");
 		return;
 	}
@@ -670,9 +546,10 @@ static void ssusb_redriver_orientation_gpio_init(
 	rc = devm_gpio_request(dev, redriver->orientation_gpio, "redriver");
 	if (rc < 0) {
 		dev_err(dev, "Failed to request gpio\n");
-		redriver->orientation_gpio = -EINVAL;
 		return;
 	}
+
+	redriver->orientation_gpio_enable = true;
 }
 
 static const struct regmap_config redriver_regmap = {
@@ -1022,8 +899,8 @@ static int __maybe_unused redriver_i2c_suspend(struct device *dev)
 	    redriver->op_mode == OP_MODE_DEFAULT)
 		return 0;
 
-	redriver_i2c_reg_set(redriver, GEN_DEV_SET_REG,
-				redriver->gen_dev_val & ~CHIP_EN);
+	redriver->op_mode = OP_MODE_NONE;
+	ssusb_redriver_gen_dev_set(redriver);
 
 	return 0;
 }
@@ -1035,15 +912,6 @@ static int __maybe_unused redriver_i2c_resume(struct device *dev)
 
 	dev_dbg(redriver->dev, "%s: SS USB redriver resume.\n",
 			__func__);
-
-	/* no suspend happen in following mode */
-	if (redriver->op_mode == OP_MODE_DP ||
-	    redriver->op_mode == OP_MODE_NONE ||
-	    redriver->op_mode == OP_MODE_DEFAULT)
-		return 0;
-
-	redriver_i2c_reg_set(redriver, GEN_DEV_SET_REG,
-				redriver->gen_dev_val);
 
 	return 0;
 }
