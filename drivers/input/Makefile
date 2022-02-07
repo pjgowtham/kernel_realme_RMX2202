@@ -29,3 +29,18 @@ obj-$(CONFIG_INPUT_MISC)	+= misc/
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
+#ifdef OPLUS_FEATURE_FINGERPRINT
+#Bin.Li@BSP.Fingerprint.Secure 2020/08/28 add for oplus secure
+obj-$(CONFIG_OPLUS_SECURE)  += oplus_secure_drivers/
+#endif /* OPLUS_FEATURE_FINGERPRINT */
+
+#ifdef OPLUS_FEATURE_FINGERPRINT
+#Bangxiong.Wu@BSP.Fingerprint.Basic, 2019/04/17, Add for fingerprint driver
+obj-$(CONFIG_OPPO_FINGERPRINT)  += oplus_fp_drivers/
+#endif /* OPLUS_FEATURE_FINGERPRINT */
+
+ifeq ($(strip$(BRAND_SHOW_FLAG)), oneplus)
+	ccflags-y += -DOPLUS_CHG_OP_DEF
+else ifeq ($(strip$(CONFIG_OPLUS_CHG_OOS)), y)
+	ccflags-y += -DOPLUS_CHG_OP_DEF
+endif
