@@ -187,8 +187,13 @@ out:
 }
 
 #ifdef CONFIG_SWAP
+#if defined(CONFIG_NANDSWAP)
+int swapin_walk_pmd_entry(pmd_t *pmd, unsigned long start,
+	unsigned long end, struct mm_walk *walk)
+#else
 static int swapin_walk_pmd_entry(pmd_t *pmd, unsigned long start,
 	unsigned long end, struct mm_walk *walk)
+#endif
 {
 	pte_t *orig_pte;
 	struct vm_area_struct *vma = walk->private;
@@ -203,6 +208,10 @@ static int swapin_walk_pmd_entry(pmd_t *pmd, unsigned long start,
 		struct page *page;
 		spinlock_t *ptl;
 
+#if defined(CONFIG_NANDSWAP)
+		if (!list_empty(&vma->vm_mm->mmap_sem.wait_list))
+			return -1;
+#endif
 		orig_pte = pte_offset_map_lock(vma->vm_mm, pmd, start, &ptl);
 		pte = *(orig_pte + ((index - start) / PAGE_SIZE));
 		pte_unmap_unlock(orig_pte, ptl);
@@ -1280,7 +1289,8 @@ SYSCALL_DEFINE6(process_madvise, int, which, pid_t, upid,
 		goto put_pid;
 	}
 
-	if (!process_madvise_behavior_valid(behavior)) {
+	if (task->mm != current->mm &&
+			!process_madvise_behavior_valid(behavior)) {
 		ret = -EINVAL;
 		goto release_task;
 	}
