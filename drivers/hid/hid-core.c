@@ -911,7 +911,17 @@ static int hid_scan_report(struct hid_device *hid)
 				hid->group = HID_GROUP_RMI;
 		break;
 	}
+#if IS_ENABLED(CONFIG_OPLUS_BT_BUG_STABILITY)
+//GaoShangXiu@PSW.CONNECTIVITY.BT.HID.2492575, 2019/11/19
+//add for BLE-M1 uhid group change HID_GROUP_GENERIC
+	if (0x248a == hid->vendor && 2 == hid->group) {
+		hid_warn(hid, "scan_report change to GENERIC %u\n", hid->group);
+		hid->group = HID_GROUP_GENERIC;
+	}
 
+	/* fall back to generic driver in case specific driver doesn't exist */
+	hid_warn(hid, "report vendor %u,group %u\n", hid->vendor, hid->group);
+#endif /* CONFIG_OPLUS_BT_BUG_STABILITY */
 	kfree(parser->collection_stack);
 	vfree(parser);
 	return 0;
@@ -1598,17 +1608,6 @@ static void hid_output_field(const struct hid_device *hid,
 }
 
 /*
- * Compute the size of a report.
- */
-static size_t hid_compute_report_size(struct hid_report *report)
-{
-	if (report->size)
-		return ((report->size - 1) >> 3) + 1;
-
-	return 0;
-}
-
-/*
  * Create a report. 'data' has to be allocated using
  * hid_alloc_report_buf() so that it has proper size.
  */
@@ -1620,7 +1619,7 @@ void hid_output_report(struct hid_report *report, __u8 *data)
 	if (report->id > 0)
 		*data++ = report->id;
 
-	memset(data, 0, hid_compute_report_size(report));
+	memset(data, 0, ((report->size - 1) >> 3) + 1);
 	for (n = 0; n < report->maxfield; n++)
 		hid_output_field(report->device, report->field[n], data);
 }
@@ -1750,7 +1749,7 @@ int hid_report_raw_event(struct hid_device *hid, int type, u8 *data, u32 size,
 		csize--;
 	}
 
-	rsize = hid_compute_report_size(report);
+	rsize = ((report->size - 1) >> 3) + 1;
 
 	if (report_enum->numbered && rsize >= HID_MAX_BUFFER_SIZE)
 		rsize = HID_MAX_BUFFER_SIZE - 1;

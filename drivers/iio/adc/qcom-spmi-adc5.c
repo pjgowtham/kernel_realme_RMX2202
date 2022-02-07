@@ -695,8 +695,8 @@ static const struct adc5_channels adc5_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_AMUX_THM2]	= ADC5_CHAN_TEMP("amux_thm2", 0,
 					SCALE_HW_CALIB_PM5_SMB_TEMP)
-	[ADC5_PARALLEL_ISENSE]	= ADC5_CHAN_VOLT("parallel_isense", 0,
-					SCALE_HW_CALIB_PM5_CUR)
+	[ADC5_PARALLEL_ISENSE]	= ADC5_CHAN_VOLT("parallel_isense", 1,
+					SCALE_HW_CALIB_CUR)
 	[ADC5_GPIO1_100K_PU]	= ADC5_CHAN_TEMP("gpio1_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_100k_pu", 0,
@@ -738,18 +738,41 @@ static const struct adc5_channels adc7_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
 	[ADC7_AMUX_THM4_100K_PU]	= ADC5_CHAN_TEMP("amux_thm4_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+#ifndef OPLUS_FEATURE_CHG_BASIC
+/*lizhijie@BSP.CHG.Basic. 2020/08/25 lzj add for usbtemp*/
 	[ADC7_AMUX_THM5_100K_PU]	= ADC5_CHAN_TEMP("amux_thm5_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+#else
+	[ADC7_AMUX_THM5_100K_PU]	= ADC5_CHAN_VOLT("amux_thm5_pu2", 0,
+					SCALE_HW_CALIB_DEFAULT)
+#endif
 	[ADC7_AMUX_THM6_100K_PU]	= ADC5_CHAN_TEMP("amux_thm6_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
-	[ADC7_GPIO1_100K_PU]	= ADC5_CHAN_TEMP("gpio1_pu2", 0,
+	[ADC7_GPIO1_100K_PU]    = ADC5_CHAN_TEMP("gpio1_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+#ifdef VENDOR_EDIT
+/*Ping.Zhang@BSP.Kernel.Driver, 2020/08/05, Add for adc read for aboard*/
+	[ADC7_GPIO1]	= ADC5_CHAN_VOLT("pm8350_board_id", 0,
+					SCALE_HW_CALIB_DEFAULT)
+#endif /*VENDOR_EDIT*/
+#ifndef OPLUS_FEATURE_CHG_BASIC
+/*lizhijie@BSP.CHG.Basic. 2020/08/25 lzj add for usbtemp*/
 	[ADC7_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+#else
+	[ADC7_GPIO2_100K_PU]	= ADC5_CHAN_VOLT("gpio2_pu2", 0,
+					SCALE_HW_CALIB_DEFAULT)
+#endif
 	[ADC7_GPIO3_100K_PU]	= ADC5_CHAN_TEMP("gpio3_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
 	[ADC7_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	[ADC7_AMUX_THM5_30K_PU]	= ADC5_CHAN_VOLT("gpio1_v", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO2_30K_PU]	= ADC5_CHAN_VOLT("gpio3_v", 0,
+					SCALE_HW_CALIB_DEFAULT)
+#endif
 };
 
 static const struct adc5_channels adc5_chans_rev2[ADC5_MAX_CHANNEL] = {
@@ -918,7 +941,6 @@ static int adc5_get_dt_channel_data(struct adc5_chip *adc,
 }
 
 static const struct adc5_data adc5_data_pmic = {
-	.name = "pm-adc5",
 	.full_scale_code_volt = 0x70e4,
 	.full_scale_code_cur = 0x2710,
 	.adc_chans = adc5_chans_pmic,
@@ -933,7 +955,6 @@ static const struct adc5_data adc5_data_pmic = {
 };
 
 static const struct adc5_data adc7_data_pmic = {
-	.name = "pm-adc7",
 	.full_scale_code_volt = 0x70e4,
 	.adc_chans = adc7_chans_pmic,
 	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
@@ -945,7 +966,6 @@ static const struct adc5_data adc7_data_pmic = {
 };
 
 static const struct adc5_data adc5_data_pmic5_lite = {
-	.name = "pm-adc5-lite",
 	.full_scale_code_volt = 0x70e4,
 	/* On PMI632, IBAT LSB = 5A/32767 */
 	.full_scale_code_cur = 5000,
@@ -956,7 +976,6 @@ static const struct adc5_data adc5_data_pmic5_lite = {
 };
 
 static const struct adc5_data adc5_data_pmic_rev2 = {
-	.name = "pm-adc4-rev2",
 	.full_scale_code_volt = 0x4000,
 	.full_scale_code_cur = 0x1800,
 	.adc_chans = adc5_chans_rev2,
@@ -1060,7 +1079,6 @@ static int adc5_probe(struct platform_device *pdev)
 	struct iio_dev *indio_dev;
 	struct adc5_chip *adc;
 	struct regmap *regmap;
-	const char *irq_name;
 	int ret, irq_eoc;
 	u32 reg;
 
@@ -1105,12 +1123,8 @@ static int adc5_probe(struct platform_device *pdev)
 			return irq_eoc;
 		adc->poll_eoc = true;
 	} else {
-		irq_name = "pm-adc5";
-		if (adc->data->name)
-			irq_name = adc->data->name;
-
 		ret = devm_request_irq(dev, irq_eoc, adc5_isr, 0,
-				       irq_name, adc);
+				       "pm-adc5", adc);
 		if (ret)
 			return ret;
 	}

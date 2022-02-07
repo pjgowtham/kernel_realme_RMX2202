@@ -23,7 +23,7 @@
 #define MINIMUM_DUN_SIZE 512
 #define MAXIMUM_DUN_SIZE 65536
 
-static struct cqhci_host_crypto_variant_ops __maybe_unused cqhci_crypto_qti_variant_ops = {
+static struct cqhci_host_crypto_variant_ops cqhci_crypto_qti_variant_ops = {
 	.host_init_crypto = cqhci_crypto_qti_init_crypto,
 	.enable = cqhci_crypto_qti_enable,
 	.disable = cqhci_crypto_qti_disable,
@@ -210,21 +210,19 @@ int cqhci_host_init_crypto_qti_spec(struct cqhci_host *host,
 				host->crypto_cap_array[cap_idx].sdus_mask * 512;
 	}
 
-	host->mmc->ksm = keyslot_manager_create(host->mmc->parent,
+	host->ksm = keyslot_manager_create(host->mmc->parent,
 				       cqhci_num_keyslots(host), ksm_ops,
 				       BLK_CRYPTO_FEATURE_STANDARD_KEYS |
 				       BLK_CRYPTO_FEATURE_WRAPPED_KEYS,
 				       crypto_modes_supported,
 				       host);
 
-	if (!host->mmc->ksm) {
+	keyslot_manager_set_max_dun_bytes(host->ksm, sizeof(u32));
+
+	if (!host->ksm) {
 		err = -ENOMEM;
 		goto out;
 	}
-
-	host->mmc->caps2 |= MMC_CAP2_CRYPTO;
-	keyslot_manager_set_max_dun_bytes(host->mmc->ksm, sizeof(u32));
-
 	/*
 	 * In case host controller supports cryptographic operations
 	 * then, it uses 128bit task descriptor. Upper 64 bits of task
@@ -309,12 +307,8 @@ void cqhci_crypto_qti_set_vops(struct cqhci_host *host)
 {
 	return cqhci_crypto_set_vops(host, &cqhci_crypto_qti_variant_ops);
 }
-EXPORT_SYMBOL(cqhci_crypto_qti_set_vops);
 
 int cqhci_crypto_qti_resume(struct cqhci_host *host)
 {
 	return crypto_qti_resume(host->crypto_vops->priv);
 }
-
-MODULE_DESCRIPTION("Vendor specific CQHCI Crypto Engine Support");
-MODULE_LICENSE("GPL v2");

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (c) 2016-2020, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2016-2021, The Linux Foundation. All rights reserved. */
 
 #ifndef _CNSS_MAIN_H
 #define _CNSS_MAIN_H
@@ -324,7 +324,6 @@ enum cnss_debug_quirks {
 	DISABLE_DRV,
 	DISABLE_IO_COHERENCY,
 	IGNORE_PCI_LINK_FAILURE,
-	DISABLE_TIME_SYNC,
 };
 
 enum cnss_bdf_type {
@@ -386,14 +385,6 @@ struct cnss_dms_data {
 	u8 mac[QMI_WLFW_MAC_ADDR_SIZE_V01];
 };
 
-enum cnss_timeout_type {
-	CNSS_TIMEOUT_QMI,
-	CNSS_TIMEOUT_POWER_UP,
-	CNSS_TIMEOUT_IDLE_RESTART,
-	CNSS_TIMEOUT_CALIBRATION,
-	CNSS_TIMEOUT_WLAN_WATCHDOG,
-};
-
 struct cnss_plat_data {
 	struct platform_device *plat_dev;
 	void *bus_priv;
@@ -416,6 +407,7 @@ struct cnss_plat_data {
 	struct cnss_platform_cap cap;
 	struct pm_qos_request qos_request;
 	struct cnss_device_version device_version;
+	u32 rc_num;
 	unsigned long device_id;
 	enum cnss_driver_status driver_status;
 	u32 recovery_count;
@@ -457,7 +449,6 @@ struct cnss_plat_data {
 	u8 powered_on;
 	u8 use_fw_path_with_prefix;
 	char firmware_name[MAX_FIRMWARE_NAME_LEN];
-	char fw_fallback_name[MAX_FIRMWARE_NAME_LEN];
 	struct completion rddm_complete;
 	struct completion recovery_complete;
 	struct cnss_control_params ctrl_params;
@@ -513,6 +504,13 @@ int cnss_vreg_on_type(struct cnss_plat_data *plat_priv,
 		      enum cnss_vreg_type type);
 int cnss_vreg_off_type(struct cnss_plat_data *plat_priv,
 		       enum cnss_vreg_type type);
+#ifdef OPLUS_BUG_STABILITY
+//WuGuotian@CONNECTIVITY.WIFI.HARDWARE.FTM.1776184, 2021/02/08,Add for boot wlan mode not use NV mac
+int cnss_l7e_vreg_on(struct cnss_plat_data *plat_priv,
+		     struct list_head *vreg_list);
+int cnss_l7e_vreg_off(struct cnss_plat_data *plat_priv,
+		     struct list_head *vreg_list);
+#endif /* OPLUS_BUG_STABILITY */
 int cnss_get_clk(struct cnss_plat_data *plat_priv);
 void cnss_put_clk(struct cnss_plat_data *plat_priv);
 int cnss_vreg_unvote_type(struct cnss_plat_data *plat_priv,
@@ -540,7 +538,5 @@ int cnss_minidump_remove_region(struct cnss_plat_data *plat_priv,
 				void *va, phys_addr_t pa, size_t size);
 int cnss_enable_int_pow_amp_vreg(struct cnss_plat_data *plat_priv);
 int cnss_get_tcs_info(struct cnss_plat_data *plat_priv);
-unsigned int cnss_get_timeout(struct cnss_plat_data *plat_priv,
-			      enum cnss_timeout_type);
 
 #endif /* _CNSS_MAIN_H */

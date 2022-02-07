@@ -327,6 +327,7 @@ int cqhci_deactivate(struct mmc_host *mmc)
 	struct cqhci_host *cq_host = mmc->cqe_private;
 
 	cqhci_crypto_suspend(cq_host);
+
 	if (cq_host->enabled && cq_host->activated)
 		__cqhci_disable(cq_host);
 
@@ -400,10 +401,8 @@ static void cqhci_off(struct mmc_host *mmc)
 				 reg & CQHCI_HALT, 0, CQHCI_OFF_TIMEOUT);
 	if (err < 0)
 		pr_err("%s: cqhci: CQE stuck on\n", mmc_hostname(mmc));
-	else {
+	else
 		pr_debug("%s: cqhci: CQE off\n", mmc_hostname(mmc));
-		mmc_log_string(mmc, "cqhci: CQE off\n");
-	}
 
 	mmc->cqe_on = false;
 }
@@ -639,7 +638,6 @@ static int cqhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	if (!mmc->cqe_on) {
 		cqhci_writel(cq_host, 0, CQHCI_CTL);
 		mmc->cqe_on = true;
-		mmc_log_string(mmc, "cqhci: CQE on\n");
 		pr_debug("%s: cqhci: CQE on\n", mmc_hostname(mmc));
 		if (cqhci_readl(cq_host, CQHCI_CTL) && CQHCI_HALT) {
 			pr_err("%s: cqhci: CQE failed to exit halt state\n",
@@ -654,7 +652,7 @@ static int cqhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		if (err) {
 			pr_err("%s: failed to retrieve crypto ctx for tag %d\n",
 				mmc_hostname(mmc), tag);
-			return err;
+			goto out;
 		}
 		task_desc = (__le64 __force *)get_desc(cq_host, tag);
 		cqhci_prep_task_desc(mrq, &data, 1);
@@ -697,6 +695,7 @@ out_unlock:
 
 	if (mrq->data)
 		cqhci_complete_crypto_desc(cq_host, mrq, NULL);
+out:
 	return err;
 }
 
@@ -758,8 +757,6 @@ static void cqhci_error_irq(struct mmc_host *mmc, u32 status, int cmd_error,
 
 	pr_debug("%s: cqhci: error IRQ status: 0x%08x cmd error %d data error %d TERRI: 0x%08x\n",
 		 mmc_hostname(mmc), status, cmd_error, data_error, terri);
-	mmc_log_string(mmc, "cqhci: status:0x%08x TERRI:0x%08x\n",
-		status, terri);
 
 	/* Forget about errors when recovery has already been triggered */
 	if (cq_host->recovery_halt)
@@ -839,6 +836,7 @@ static void cqhci_finish_mrq(struct mmc_host *mmc, unsigned int tag)
 	data = mrq->data;
 	if (data) {
 		cqhci_complete_crypto_desc(cq_host, mrq, NULL);
+
 		if (data->error)
 			data->bytes_xfered = 0;
 		else
@@ -871,12 +869,6 @@ irqreturn_t cqhci_irq(struct mmc_host *mmc, u32 intmask, int cmd_error,
 	if ((status & CQHCI_IS_RED) || cmd_error || data_error || ice_err) {
 #if defined(CONFIG_SDC_QTI)
 		mmc->need_hw_reset = true;
-		if (status & CQHCI_IS_RED)
-			mmc->err_stats[MMC_ERR_CMDQ_RED]++;
-		if (status & CQHCI_IS_GCE)
-			mmc->err_stats[MMC_ERR_CMDQ_GCE]++;
-		if (status & CQHCI_IS_ICCE)
-			mmc->err_stats[MMC_ERR_CMDQ_ICCE]++;
 #endif
 		cqhci_error_irq(mmc, status, cmd_error, data_error);
 	}
@@ -1169,6 +1161,7 @@ static void cqhci_recovery_finish(struct mmc_host *mmc)
 	cqhci_set_irqs(cq_host, CQHCI_IS_MASK);
 
 	cqhci_crypto_recovery_finish(cq_host);
+
 	pr_debug("%s: cqhci: recovery done\n", mmc_hostname(mmc));
 	mmc_log_string(mmc, "recovery done\n");
 }
@@ -1212,7 +1205,9 @@ struct cqhci_host *cqhci_pltfm_init(struct platform_device *pdev)
 		return ERR_PTR(-EBUSY);
 	}
 
+#ifdef CONFIG_MMC_CQHCI_CRYPTO_QTI
 	cq_host->pdev = pdev;
+#endif /* CONFIG_MMC_CQHCI_CRYPTO_QTI */
 
 	dev_dbg(&pdev->dev, "CMDQ ioremap: done\n");
 

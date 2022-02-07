@@ -2120,7 +2120,6 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 		dev_err(dev, "failed to request IRQ\n");
 		goto unregister;
 	}
-
 	enable_irq_wake(irq);
 	glink->irq = irq;
 

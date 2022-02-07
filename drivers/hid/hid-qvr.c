@@ -145,7 +145,7 @@ static int read_calibration_len(void)
 	return sensor->calib_data_len;
 }
 
-static uint8_t *read_calibration_data(int calib_data_len)
+static uint8_t *read_calibration_data(void)
 {
 	struct qvr_external_sensor *sensor = &qvr_external_sensor;
 	__u8 *hid_buf;
@@ -153,7 +153,7 @@ static uint8_t *read_calibration_data(int calib_data_len)
 	uint8_t read_len;
 	uint8_t *complete_data = NULL;
 
-	if (calib_data_len <= 0) {
+	if (sensor->calib_data_len < 0) {
 		pr_err("%s: calibration data len missing\n", __func__);
 		return NULL;
 	}
@@ -165,13 +165,13 @@ static uint8_t *read_calibration_data(int calib_data_len)
 	hid_buf[0] = QVR_HID_REPORT_ID_CAL;
 	hid_buf[1] = QVR_CMD_ID_CALIBRATION_BLOCK_DATA;
 
-	complete_data = kzalloc(calib_data_len, GFP_KERNEL);
+	complete_data = kzalloc(sensor->calib_data_len, GFP_KERNEL);
 	if (complete_data == NULL) {
 		kfree(hid_buf);
 		return NULL;
 	}
 	total_read_len = 0;
-	while (total_read_len < calib_data_len) {
+	while (total_read_len < sensor->calib_data_len) {
 		sensor->calib_data_recv = 0;
 		ret = hid_hw_raw_request(sensor->hdev, hid_buf[0],
 			hid_buf,
@@ -193,14 +193,7 @@ static uint8_t *read_calibration_data(int calib_data_len)
 			return NULL;
 		}
 		read_len = sensor->calib_data_pkt[2];
-
-		if (read_len <= 0) {
-			pr_err("%s:Viewer returned non positve length\n", __func__);
-			kfree(hid_buf);
-			kfree(complete_data);
-			return NULL;
-		}
-		if (total_read_len > calib_data_len - read_len) {
+		if (total_read_len > sensor->calib_data_len - read_len) {
 			kfree(hid_buf);
 			kfree(complete_data);
 			return NULL;
@@ -550,7 +543,6 @@ static long qvr_external_sensor_ioctl(struct file *file, unsigned int cmd,
 	struct qvr_external_sensor *sensor = &qvr_external_sensor;
 	struct qvr_calib_data data;
 	uint8_t *calib_data;
-	int lcalib_data_len;
 	void __user *argp = (void __user *)arg;
 	int ret;
 
@@ -576,14 +568,13 @@ static long qvr_external_sensor_ioctl(struct file *file, unsigned int cmd,
 			return -EFAULT;
 		return 0;
 	case QVR_READ_CALIB_DATA:
-		lcalib_data_len = sensor->calib_data_len;
 		sensor->calib_data_recv = 0;
-		calib_data = read_calibration_data(lcalib_data_len);
+		calib_data = read_calibration_data();
 		if (calib_data == NULL)
 			return -ENOMEM;
 		data.data_ptr = (__u64)arg;
 		if (copy_to_user(u64_to_user_ptr(data.data_ptr), calib_data,
-				lcalib_data_len)) {
+				sensor->calib_data_len)) {
 			kfree(calib_data);
 			return -EFAULT;
 		}
@@ -621,10 +612,8 @@ static int qvr_external_sensor_raw_event(struct hid_device *hid,
 		else if (data[0] == 2 && data[1] == 1) { /*calibration data*/
 			sensor->calib_data_pkt = data;
 			sensor->calib_data_recv = 1;
-		} else if (data[0] == 2 && data[1] == 4) { /*calibration ack*/
+		} else if (data[0] == 2 && data[1] == 4) /*calibration ack*/
 			sensor->ext_ack = 1;
-			wake_up(&wq);
-		}
 
 	}
 	return ret;
@@ -632,9 +621,6 @@ static int qvr_external_sensor_raw_event(struct hid_device *hid,
 
 static void qvr_external_sensor_device_remove(struct hid_device *hdev)
 {
-	struct qvr_external_sensor *sensor = &qvr_external_sensor;
-
-	sensor->device = NULL;
 	hid_hw_stop(hdev);
 }
 

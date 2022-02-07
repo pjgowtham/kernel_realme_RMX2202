@@ -542,6 +542,7 @@ fail:
 	return ret;
 }
 
+
 #ifdef MODULE
 static int qcom_pdc_probe(struct platform_device *pdev)
 {
@@ -553,7 +554,6 @@ static int qcom_pdc_probe(struct platform_device *pdev)
 static const struct of_device_id qcom_pdc_match_table[] = {
 	{ .compatible = "qcom,lahaina-pdc" },
 	{ .compatible = "qcom,shima-pdc" },
-	{ .compatible = "qcom,sm8150-pdc" },
 	{ .compatible = "qcom,yupik-pdc" },
 	{}
 };
@@ -571,7 +571,6 @@ module_platform_driver(qcom_pdc_driver);
 IRQCHIP_DECLARE(qcom_pdc, "qcom,pdc", qcom_pdc_init);
 IRQCHIP_DECLARE(pdc_lahaina, "qcom,lahaina-pdc", qcom_pdc_init);
 IRQCHIP_DECLARE(pdc_shima, "qcom,shima-pdc", qcom_pdc_init);
-IRQCHIP_DECLARE(pdc_sm8150, "qcom,sm8150-pdc", qcom_pdc_init);
 IRQCHIP_DECLARE(pdc_yupik, "qcom,yupik-pdc", qcom_pdc_init);
 IRQCHIP_DECLARE(pdc_sdxlemur, "qcom,sdxlemur-pdc", qcom_pdc_init);
 #endif

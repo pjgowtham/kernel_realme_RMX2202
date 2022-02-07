@@ -1834,8 +1834,8 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 	spin_lock_irqsave(hba->host->host_lock, flags);
 	/* Set the rpm auto suspend delay to 3s */
 	hba->host->hostt->rpm_autosuspend_delay = UFS_QCOM_AUTO_SUSPEND_DELAY;
-	/* Set the default auto-hiberate idle timer value to 5ms */
-	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 5) |
+	/* Set the default auto-hiberate idle timer value to 10ms */
+	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 10) |
 		    FIELD_PREP(UFSHCI_AHIBERN8_SCALE_MASK, 3);
 	/* Set the clock gating delay to performance mode */
 	hba->clk_gating.delay_ms = UFS_QCOM_CLK_GATING_DELAY_MS_PERF;
@@ -2212,7 +2212,13 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 			__func__, err);
 		goto out_release_mem;
 	}
-
+#if defined(CONFIG_UFSFEATURE)
+	if (ufsf_check_query(ioctl_data->opcode)) {
+		err = ufsf_query_ioctl(&hba->ufsf, lun, buffer, ioctl_data,
+				       UFSFEATURE_SELECTOR);
+		goto out_release_mem;
+	}
+#endif
 	/* verify legal parameters & send query */
 	switch (ioctl_data->opcode) {
 	case UPIU_QUERY_OPCODE_READ_DESC:
@@ -2222,6 +2228,10 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		case QUERY_DESC_IDN_INTERCONNECT:
 		case QUERY_DESC_IDN_GEOMETRY:
 		case QUERY_DESC_IDN_POWER:
+#ifdef OPLUS_FEATURE_STORAGE_TOOL
+/* tianwen@BSP.Storage, 2020-10-13, add for read healthy desc by ioctl*/
+		case QUERY_DESC_IDN_HEALTH:
+#endif
 			index = 0;
 			break;
 		case QUERY_DESC_IDN_UNIT:
@@ -2266,6 +2276,10 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		case QUERY_ATTR_IDN_EE_CONTROL:
 		case QUERY_ATTR_IDN_EE_STATUS:
 		case QUERY_ATTR_IDN_SECONDS_PASSED:
+#ifdef OPLUS_FEATURE_STORAGE_TOOL
+/* tianwen@BSP.Storage, 2020-10-13, add for read ffu status attribute by ioctl*/
+		case QUERY_ATTR_IDN_FFU_STATUS:
+#endif
 			index = 0;
 			break;
 		case QUERY_ATTR_IDN_DYN_CAP_NEEDED:
@@ -2402,13 +2416,13 @@ ufs_qcom_ioctl(struct scsi_device *dev, unsigned int cmd, void __user *buffer)
 	int err = 0;
 
 	BUG_ON(!hba);
+	if (!buffer) {
+		dev_err(hba->dev, "%s: User buffer is NULL!\n", __func__);
+		return -EINVAL;
+	}
 
 	switch (cmd) {
 	case UFS_IOCTL_QUERY:
-		if (!buffer) {
-			dev_err(hba->dev, "%s: User buffer is NULL!\n", __func__);
-			return -EINVAL;
-		}
 		pm_runtime_get_sync(hba->dev);
 		err = ufs_qcom_query_ioctl(hba,
 					   ufshcd_scsi_to_upiu_lun(dev->lun),
@@ -2492,9 +2506,6 @@ static void ufs_qcom_qos(struct ufs_hba *hba, int tag, bool is_scsi_cmd)
 	if (cpu < 0)
 		return;
 	qcg = cpu_to_group(host->ufs_qos, cpu);
-	if (!qcg)
-		return;
-
 	if (qcg->voted) {
 		dev_dbg(qcg->host->hba->dev, "%s: qcg: 0x%08x | Mask: 0x%08x - Already voted - return\n",
 			__func__, qcg, qcg->mask);
@@ -2767,10 +2778,12 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 	}
 
 	/* update phy revision information before calling phy_init() */
-	ufs_qcom_phy_save_controller_version(host->generic_phy,
-			host->hw_ver.major, host->hw_ver.minor, host->hw_ver.step);
-
-	 err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
+	/*
+	 * FIXME:
+	 * ufs_qcom_phy_save_controller_version(host->generic_phy,
+	 *	host->hw_ver.major, host->hw_ver.minor, host->hw_ver.step);
+	 */
+	err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
 				      &host->vddp_ref_clk);
 
 	err = phy_init(host->generic_phy);

@@ -168,7 +168,11 @@ static void tmc_pages_free(struct tmc_pages *tmc_pages,
 			__free_page(tmc_pages->pages[i]);
 	}
 
+#ifdef OPLUS_FEATURE_PERFORMANCE
+	vfree(tmc_pages->pages);
+#else
 	kfree(tmc_pages->pages);
+#endif
 	kfree(tmc_pages->daddrs);
 	tmc_pages->pages = NULL;
 	tmc_pages->daddrs = NULL;
@@ -197,8 +201,12 @@ static int tmc_pages_alloc(struct tmc_pages *tmc_pages,
 					 GFP_KERNEL);
 	if (!tmc_pages->daddrs)
 		return -ENOMEM;
+#ifdef OPLUS_FEATURE_PERFORMANCE
+	tmc_pages->pages = vmalloc(nr_pages *sizeof(*tmc_pages->pages));
+#else
 	tmc_pages->pages = kcalloc(nr_pages, sizeof(*tmc_pages->pages),
 					 GFP_KERNEL);
+#endif
 	if (!tmc_pages->pages) {
 		kfree(tmc_pages->daddrs);
 		tmc_pages->daddrs = NULL;

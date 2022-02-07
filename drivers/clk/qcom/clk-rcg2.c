@@ -112,6 +112,7 @@ static int update_config(struct clk_rcg2 *rcg)
 	int count, ret;
 	u32 cmd;
 	struct clk_hw *hw = &rcg->clkr.hw;
+	const char *name = clk_hw_get_name(hw);
 
 	ret = regmap_update_bits(rcg->clkr.regmap, rcg->cmd_rcgr + CMD_REG,
 				 CMD_UPDATE, CMD_UPDATE);
@@ -128,7 +129,7 @@ static int update_config(struct clk_rcg2 *rcg)
 		udelay(1);
 	}
 
-	WARN_CLK(hw, 1, "rcg didn't update its configuration.");
+	WARN(1, "%s: rcg didn't update its configuration.", name);
 	return -EBUSY;
 }
 
@@ -163,7 +164,7 @@ static int clk_rcg2_set_force_enable(struct clk_hw *hw)
 		udelay(1);
 	}
 
-	WARN_CLK(hw, 1, "rcg didn't turn on.");
+	WARN(1, "%s: rcg didn't turn on.", clk_hw_get_name(hw));
 	return ret;
 }
 
@@ -488,7 +489,7 @@ static void clk_rcg2_list_registers(struct seq_file *f, struct clk_hw *hw)
 	for (i = 0; data[i].name != NULL; i++) {
 		regmap_read(rcg->clkr.regmap, (rcg->cmd_rcgr +
 				data[i].offset), &val);
-		clock_debug_output(f, "%20s: 0x%.8x\n", data[i].name, val);
+		seq_printf(f, "%20s: 0x%.8x\n", data[i].name, val);
 	}
 
 }

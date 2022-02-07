@@ -80,7 +80,6 @@ struct cnss_pci_data {
 	const struct pci_device_id *pci_device_id;
 	u32 device_id;
 	u16 revision_id;
-	u64 dma_bit_mask;
 	struct cnss_wlan_driver *driver_ops;
 	u8 pci_link_state;
 	u8 pci_link_down_ind;
@@ -94,7 +93,6 @@ struct cnss_pci_data {
 	u32 qmi_send_usage_count;
 	u16 def_link_speed;
 	u16 def_link_width;
-	u16 cur_link_speed;
 	struct completion wake_event;
 	u8 monitor_wake_intr;
 	struct iommu_domain *iommu_domain;
@@ -242,5 +240,10 @@ int cnss_pci_debug_reg_write(struct cnss_pci_data *pci_priv, u32 offset,
 int cnss_pci_get_iova(struct cnss_pci_data *pci_priv, u64 *addr, u64 *size);
 int cnss_pci_get_iova_ipa(struct cnss_pci_data *pci_priv, u64 *addr,
 			  u64 *size);
+#ifdef OPLUS_BUG_STABILITY
+//WuGuotian@CONNECTIVITY.WIFI.HARDWARE.FTM.1776184, 2021/02/08,Add for boot wlan mode not use NV mac
+int cnss_pci_pa_en_rw(struct cnss_pci_data *pci_priv);
+int cnss_pci_pa_dis_rw(struct cnss_pci_data *pci_priv);
+#endif /* OPLUS_BUG_STABILITY */
 
 #endif /* _CNSS_PCI_H */

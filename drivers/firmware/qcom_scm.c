@@ -452,8 +452,7 @@ EXPORT_SYMBOL(qcom_scm_mem_protect_video);
 
 int qcom_scm_mem_protect_region_id(phys_addr_t paddr, size_t size)
 {
-	return __qcom_scm_mem_protect_region_id(__scm ? __scm->dev : NULL,
-								paddr, size);
+	return __qcom_scm_mem_protect_region_id(__scm->dev, paddr, size);
 }
 EXPORT_SYMBOL(qcom_scm_mem_protect_region_id);
 

@@ -17,8 +17,6 @@
 #define QCA6390_DEVICE_ID		0x1101
 #define QCA6490_VENDOR_ID		0x17CB
 #define QCA6490_DEVICE_ID		0x1103
-#define WCN7850_VENDOR_ID		0x17CB
-#define WCN7850_DEVICE_ID		0x1107
 
 enum cnss_dev_bus_type cnss_get_dev_bus_type(struct device *dev);
 enum cnss_dev_bus_type cnss_get_bus_type(unsigned long device_id);
@@ -29,6 +27,10 @@ void cnss_bus_deinit(struct cnss_plat_data *plat_priv);
 void cnss_bus_add_fw_prefix_name(struct cnss_plat_data *plat_priv,
 				 char *prefix_name, char *name);
 int cnss_bus_load_m3(struct cnss_plat_data *plat_priv);
+#ifdef OPLUS_BUG_STABILITY
+//WuGuotian@CONNECTIVITY.WIFI.HARDWARE.FTM.1776184, 2021/02/08,Add for boot wlan mode not use NV mac
+void cnss_bus_pa_en_rw(struct cnss_plat_data *plat_priv, int en);
+#endif /* OPLUS_BUG_STABILITY */
 int cnss_bus_alloc_fw_mem(struct cnss_plat_data *plat_priv);
 int cnss_bus_alloc_qdss_mem(struct cnss_plat_data *plat_priv);
 void cnss_bus_free_qdss_mem(struct cnss_plat_data *plat_priv);
