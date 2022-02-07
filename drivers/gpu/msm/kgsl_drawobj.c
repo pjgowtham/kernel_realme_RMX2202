@@ -880,8 +880,7 @@ int kgsl_drawobj_add_timeline(struct kgsl_device_private *dev_priv,
 		return -EINVAL;
 
 	timelineobj->timelines = kvcalloc(cmd.count,
-		sizeof(*timelineobj->timelines),
-		GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN);
+		sizeof(*timelineobj->timelines), GFP_KERNEL);
 	if (!timelineobj->timelines)
 		return -ENOMEM;
 
@@ -912,8 +911,6 @@ int kgsl_drawobj_add_timeline(struct kgsl_device_private *dev_priv,
 
 		trace_kgsl_drawobj_timeline(val.timeline, val.seqno);
 		timelineobj->timelines[i].seqno = val.seqno;
-
-		src += cmd.timelines_size;
 	}
 
 	timelineobj->count = cmd.count;

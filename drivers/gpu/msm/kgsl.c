@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -26,6 +26,9 @@
 #include "kgsl_sync.h"
 #include "kgsl_sysfs.h"
 #include "kgsl_trace.h"
+#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+#include <linux/reserve_area.h>
+#endif
 
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
@@ -501,52 +504,6 @@ static void kgsl_mem_entry_detach_process(struct kgsl_mem_entry *entry)
 	entry->priv = NULL;
 }
 
-#ifdef CONFIG_QCOM_KGSL_CONTEXT_DEBUG
-static void kgsl_context_debug_info(struct kgsl_device *device)
-{
-	struct kgsl_context *context;
-	struct kgsl_process_private *p;
-	int next;
-	/*
-	 * Keep an interval between consecutive logging to avoid
-	 * flooding the kernel log
-	 */
-	static DEFINE_RATELIMIT_STATE(_rs, 10 * HZ, 1);
-
-	if (!__ratelimit(&_rs))
-		return;
-
-	dev_info(device->dev, "KGSL active contexts:\n");
-	dev_info(device->dev, "pid      process         total    attached   detached\n");
-
-	read_lock(&kgsl_driver.proclist_lock);
-	read_lock(&device->context_lock);
-
-	list_for_each_entry(p, &kgsl_driver.process_list, list) {
-		int total_contexts = 0, num_detached = 0;
-
-		idr_for_each_entry(&device->context_idr, context, next) {
-			if (context->proc_priv == p) {
-				total_contexts++;
-				if (kgsl_context_detached(context))
-					num_detached++;
-			}
-		}
-
-		dev_info(device->dev, "%-8u %-15.15s %-8d %-10d %-10d\n",
-				pid_nr(p->pid), p->comm, total_contexts,
-				total_contexts - num_detached, num_detached);
-	}
-
-	read_unlock(&device->context_lock);
-	read_unlock(&kgsl_driver.proclist_lock);
-}
-#else
-static void kgsl_context_debug_info(struct kgsl_device *device)
-{
-}
-#endif
-
 /**
  * kgsl_context_dump() - dump information about a draw context
  * @device: KGSL device that owns the context
@@ -619,7 +576,6 @@ int kgsl_context_init(struct kgsl_device_private *dev_priv,
 			     "Per process context limit reached for pid %u\n",
 			     pid_nr(dev_priv->process_priv->pid));
 		spin_unlock(&proc_priv->ctxt_count_lock);
-		kgsl_context_debug_info(device);
 		return -ENOSPC;
 	}
 
@@ -639,12 +595,10 @@ int kgsl_context_init(struct kgsl_device_private *dev_priv,
 	}
 
 	if (id < 0) {
-		if (id == -ENOSPC) {
+		if (id == -ENOSPC)
 			dev_warn(device->dev,
 				      "cannot have more than %zu contexts due to memstore limitation\n",
 				      KGSL_MEMSTORE_MAX);
-			kgsl_context_debug_info(device);
-		}
 		atomic_dec(&proc_priv->ctxt_count);
 		return id;
 	}
@@ -868,7 +822,7 @@ struct kgsl_process_private *kgsl_process_private_find(pid_t pid)
 {
 	struct kgsl_process_private *p, *private = NULL;
 
-	read_lock(&kgsl_driver.proclist_lock);
+	spin_lock(&kgsl_driver.proclist_lock);
 	list_for_each_entry(p, &kgsl_driver.process_list, list) {
 		if (pid_nr(p->pid) == pid) {
 			if (kgsl_process_private_get(p))
@@ -876,7 +830,7 @@ struct kgsl_process_private *kgsl_process_private_find(pid_t pid)
 			break;
 		}
 	}
-	read_unlock(&kgsl_driver.proclist_lock);
+	spin_unlock(&kgsl_driver.proclist_lock);
 
 	return private;
 }
@@ -891,24 +845,17 @@ static struct kgsl_process_private *kgsl_process_private_new(
 	list_for_each_entry(private, &kgsl_driver.process_list, list) {
 		if (private->pid == cur_pid) {
 			if (!kgsl_process_private_get(private)) {
+				put_pid(cur_pid);
 				private = ERR_PTR(-EINVAL);
 			}
-			/*
-			 * We need to hold only one reference to the PID for
-			 * each process struct to avoid overflowing the
-			 * reference counter which can lead to use-after-free.
-			 */
-			put_pid(cur_pid);
 			return private;
 		}
 	}
 
 	/* Create a new object */
 	private = kzalloc(sizeof(struct kgsl_process_private), GFP_KERNEL);
-	if (private == NULL) {
-		put_pid(cur_pid);
+	if (private == NULL)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	kref_init(&private->refcount);
 
@@ -993,9 +940,9 @@ static void kgsl_process_private_close(struct kgsl_device_private *dev_priv,
 		kgsl_mmu_detach_pagetable(private->pagetable);
 
 	/* Remove the process struct from the master list */
-	write_lock(&kgsl_driver.proclist_lock);
+	spin_lock(&kgsl_driver.proclist_lock);
 	list_del(&private->list);
-	write_unlock(&kgsl_driver.proclist_lock);
+	spin_unlock(&kgsl_driver.proclist_lock);
 
 	/*
 	 * Unlock the mutex before releasing the memory and the debugfs
@@ -1031,9 +978,9 @@ static struct kgsl_process_private *kgsl_process_private_open(
 		kgsl_process_init_sysfs(device, private);
 		kgsl_process_init_debugfs(private);
 
-		write_lock(&kgsl_driver.proclist_lock);
+		spin_lock(&kgsl_driver.proclist_lock);
 		list_add(&private->list, &kgsl_driver.process_list);
-		write_unlock(&kgsl_driver.proclist_lock);
+		spin_unlock(&kgsl_driver.proclist_lock);
 	}
 
 done:
@@ -1955,8 +1902,7 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 	if (param->flags & KGSL_GPU_AUX_COMMAND_SYNC)
 		count++;
 
-	drawobjs = kvcalloc(count, sizeof(*drawobjs),
-		GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN);
+	drawobjs = kvcalloc(count, sizeof(*drawobjs), GFP_KERNEL);
 
 	if (!drawobjs) {
 		kgsl_context_put(context);
@@ -2401,8 +2347,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 	if (sglen == 0 || sglen >= LONG_MAX)
 		return -EINVAL;
 
-	pages = kvcalloc(sglen, sizeof(*pages),
-		GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN);
+	pages = kvcalloc(sglen, sizeof(*pages), GFP_KERNEL);
 	if (pages == NULL)
 		return -ENOMEM;
 
@@ -2451,6 +2396,8 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 {
 	/* Map an anonymous memory chunk */
 
+	int ret;
+
 	if (size == 0 || offset != 0 ||
 		!IS_ALIGNED(size, PAGE_SIZE))
 		return -EINVAL;
@@ -2460,7 +2407,6 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 	entry->memdesc.flags |= (uint64_t)KGSL_MEMFLAGS_USERMEM_ADDR;
 
 	if (kgsl_memdesc_use_cpu_map(&entry->memdesc)) {
-		int ret;
 
 		/* Register the address in the database */
 		ret = kgsl_mmu_set_svm_region(pagetable,
@@ -2472,7 +2418,12 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 		entry->memdesc.gpuaddr = (uint64_t) hostptr;
 	}
 
-	return memdesc_sg_virt(&entry->memdesc, hostptr);
+	ret =  memdesc_sg_virt(&entry->memdesc, hostptr);
+
+	if (ret && kgsl_memdesc_use_cpu_map(&entry->memdesc))
+		kgsl_mmu_put_gpuaddr(&entry->memdesc);
+
+	return ret;
 }
 
 #ifdef CONFIG_DMA_SHARED_BUFFER
@@ -4044,6 +3995,9 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 					       pid_nr(private->pid), addr, pgoff, len,
 					       (int) val);
 	}
+#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+	update_oom_pid_and_time(len, val, flags);
+#endif
 
 	kgsl_mem_entry_put(entry);
 	return val;
@@ -4153,7 +4107,7 @@ static const struct file_operations kgsl_fops = {
 
 struct kgsl_driver kgsl_driver  = {
 	.process_mutex = __MUTEX_INITIALIZER(kgsl_driver.process_mutex),
-	.proclist_lock = __RW_LOCK_UNLOCKED(kgsl_driver.proclist_lock),
+	.proclist_lock = __SPIN_LOCK_UNLOCKED(kgsl_driver.proclist_lock),
 	.ptlock = __SPIN_LOCK_UNLOCKED(kgsl_driver.ptlock),
 	.devlock = __MUTEX_INITIALIZER(kgsl_driver.devlock),
 	/*
@@ -4386,8 +4340,14 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	/* Set up the GPU events for the device */
 	kgsl_device_events_probe(device);
 
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled)
+		device->events_wq = alloc_workqueue("kgsl-events",
+			WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS | WQ_HIGHPRI | WQ_UX, 0);
+#else
 	device->events_wq = alloc_workqueue("kgsl-events",
 		WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
+#endif
 
 	/* Initialize common sysfs entries */
 	kgsl_pwrctrl_init_sysfs(device);

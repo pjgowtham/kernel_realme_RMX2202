@@ -538,7 +538,7 @@ static struct kgsl_process_private *kgsl_iommu_get_process(u64 ptbase)
 	struct kgsl_process_private *p;
 	struct kgsl_iommu_pt *iommu_pt;
 
-	read_lock(&kgsl_driver.proclist_lock);
+	spin_lock(&kgsl_driver.proclist_lock);
 
 	list_for_each_entry(p, &kgsl_driver.process_list, list) {
 		iommu_pt = p->pagetable->priv;
@@ -546,12 +546,12 @@ static struct kgsl_process_private *kgsl_iommu_get_process(u64 ptbase)
 			if (!kgsl_process_private_get(p))
 				p = NULL;
 
-			read_unlock(&kgsl_driver.proclist_lock);
+			spin_unlock(&kgsl_driver.proclist_lock);
 			return p;
 		}
 	}
 
-	read_unlock(&kgsl_driver.proclist_lock);
+	spin_unlock(&kgsl_driver.proclist_lock);
 
 	return NULL;
 }
