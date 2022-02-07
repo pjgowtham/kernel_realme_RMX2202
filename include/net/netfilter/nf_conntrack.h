@@ -17,9 +17,6 @@
 #include <linux/compiler.h>
 #include <linux/android_kabi.h>
 #include <linux/android_vendor.h>
-#ifdef CONFIG_NF_CONNTRACK_SIP_SEGMENTATION
-#include <linux/list.h>
-#endif
 
 #include <linux/netfilter/nf_conntrack_common.h>
 #include <linux/netfilter/nf_conntrack_tcp.h>
@@ -29,21 +26,9 @@
 
 #include <net/netfilter/nf_conntrack_tuple.h>
 
-#ifdef CONFIG_NF_CONNTRACK_SIP_SEGMENTATION
-#define SIP_LIST_ELEMENTS       2
-#endif
-
 struct nf_ct_udp {
 	unsigned long	stream_ts;
 };
-
-#ifdef CONFIG_NF_CONNTRACK_SIP_SEGMENTATION
-struct sip_length {
-	int msg_length[SIP_LIST_ELEMENTS];
-	int skb_len[SIP_LIST_ELEMENTS];
-	int data_len[SIP_LIST_ELEMENTS];
-};
-#endif
 
 /* per conntrack: protocol private data */
 union nf_conntrack_proto {
@@ -110,6 +95,21 @@ struct nf_conn {
 #endif
 	/* all members below initialized via memset */
 	struct { } __nfct_init_offset;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_SLA)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET.1197891, 2018/04/10,Add code for appo sla function
+	u32 oppo_game_skb_len;
+	u32 oppo_game_detect_status;
+	u32 oppo_game_time_interval;
+	u32 oppo_game_up_count;
+	u32 oppo_game_down_count;
+	u32 oppo_game_lost_count;
+	u32 oppo_game_same_count;
+	u32 oppo_http_flag;
+	u32 oppo_skb_count;
+	int oppo_app_type;
+	s64 oppo_game_timestamp;
+	s64 oppo_game_last_timestamp;
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_SLA */
 
 	/* If we were expected by an expectation, this will be it */
 	struct nf_conn *master;
@@ -127,17 +127,6 @@ struct nf_conn {
 
 #ifdef CONFIG_IP_NF_TARGET_NATTYPE_MODULE
 	unsigned long nattype_entry;
-#endif
-
-#ifdef CONFIG_ENABLE_SFE
-	void *sfe_entry;
-#endif
-#ifdef CONFIG_NF_CONNTRACK_SIP_SEGMENTATION
-	struct list_head sip_segment_list;
-	const char *dptr_prev;
-	struct sip_length segment;
-	bool sip_original_dir;
-	bool sip_reply_dir;
 #endif
 
 	/* Storage reserved for other modules, must be the last member */
@@ -330,9 +319,6 @@ extern struct hlist_nulls_head *nf_conntrack_hash;
 extern unsigned int nf_conntrack_htable_size;
 extern seqcount_t nf_conntrack_generation;
 extern unsigned int nf_conntrack_max;
-#ifdef CONFIG_ENABLE_SFE
-extern unsigned int nf_conntrack_pkt_threshold;
-#endif
 
 /* must be called with rcu read lock held */
 static inline void

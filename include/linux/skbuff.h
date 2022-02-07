@@ -37,11 +37,18 @@
 #include <linux/in6.h>
 #include <linux/if_packet.h>
 #include <net/flow.h>
+
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
 #include <linux/netfilter/nf_conntrack_common.h>
 #endif
 #include <linux/android_kabi.h>
 #include <linux/android_vendor.h>
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+#include <linux/imq.h>
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
@@ -724,6 +731,10 @@ struct sk_buff {
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
 	char			cb[48] __aligned(8);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+	void			*cb_next;
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
 
 	union {
 		struct {
@@ -736,6 +747,12 @@ struct sk_buff {
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	unsigned long		 _nfct;
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+	struct nf_queue_entry   *nf_queue_entry;
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 	unsigned int		len,
 				data_len;
 	__u16			mac_len,
@@ -814,15 +831,17 @@ struct sk_buff {
 
 	__u8			ipvs_property:1;
 	__u8			inner_protocol_type:1;
-
-#ifdef CONFIG_ENABLE_SFE
-	__u8			fast_forwarded:1;
-#endif
 	__u8			remcsum_offload:1;
 #ifdef CONFIG_NET_SWITCHDEV
 	__u8			offload_fwd_mark:1;
 	__u8			offload_l3_fwd_mark:1;
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+	__u8			imq_flags:IMQ_F_BITS;
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 #ifdef CONFIG_NET_CLS_ACT
 	__u8			tc_skip_classify:1;
 	__u8			tc_at_ingress:1;
@@ -1038,6 +1057,13 @@ void skb_tx_error(struct sk_buff *skb);
 void consume_skb(struct sk_buff *skb);
 void __consume_stateless_skb(struct sk_buff *skb);
 void  __kfree_skb(struct sk_buff *skb);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+int skb_save_cb(struct sk_buff *skb);
+int skb_restore_cb(struct sk_buff *skb);
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 extern struct kmem_cache *skbuff_head_cache;
 
 void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
@@ -4233,6 +4259,14 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src,
 	dst->_nfct = src->_nfct;
 	nf_conntrack_get(skb_nfct(src));
 #endif
+
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+	dst->imq_flags = src->imq_flags;
+	dst->nf_queue_entry = src->nf_queue_entry;
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 #if IS_ENABLED(CONFIG_NETFILTER_XT_TARGET_TRACE) || defined(CONFIG_NF_TABLES)
 	if (copy)
 		dst->nf_trace = src->nf_trace;

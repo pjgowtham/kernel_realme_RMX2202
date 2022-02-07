@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 Oplus. All rights reserved.
  */
 
 #ifndef __SUBSYS_RESTART_H
@@ -123,6 +124,10 @@ struct subsys_desc {
  * @pdev: subsystem platform device pointer
  */
 struct notif_data {
+	//yanghao@PSW.Stability for subsystem restart timeout issue 2020/12/2
+#if defined(CONFIG_QGKI) && defined(OPLUS_BUG_STABILITY)
+	int debug;
+#endif
 	enum crash_status crashed;
 	int enable_ramdump;
 	int enable_mini_ramdumps;
@@ -131,8 +136,21 @@ struct notif_data {
 };
 
 #if IS_ENABLED(CONFIG_MSM_SUBSYSTEM_RESTART)
+/* Liu.Wei@NETWORK.RF.10384, 2020/12/31, Add for report modem crash uevent in workqueue */
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+#define MAX_REASON_LEN 300
+struct dev_crash_report_work {
+	struct work_struct  work;
+	struct subsys_device *crash_dev;
+	char   crash_reason[MAX_REASON_LEN];
+};
+#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 
 extern int subsystem_restart_dev(struct subsys_device *dev);
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+//Liu.Wei@NETWORK.RF.10384, 2020/03/27, Add for report modem crash uevent
+extern void subsystem_schedule_crash_uevent_work(struct subsys_device *dev, char *reason);
+#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 extern int subsystem_restart(const char *name);
 extern int subsystem_crashed(const char *name);
 
@@ -161,6 +179,14 @@ static inline int subsystem_restart_dev(struct subsys_device *dev)
 {
 	return 0;
 }
+
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+//Liu.Wei@NETWORK.RF.10384, 2020/03/27, Add for report modem crash uevent
+static inline void subsystem_schedule_crash_uevent_work(struct subsys_device *dev, char *reason)
+{
+	return;
+}
+#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 
 static inline int subsystem_restart(const char *name)
 {
