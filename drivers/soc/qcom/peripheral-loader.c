@@ -36,6 +36,11 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_pil_event.h>
 
+#ifdef CONFIG_OPLUS_FEATURE_MM_FEEDBACK
+/* Zhao.Pan@MULTIMEDIA.AUDIODRIVER.HEADSETDET, 2020/08/28, Add for mm feedback */
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 #include "peripheral-loader.h"
 
 #define pil_err(desc, fmt, ...)						\
@@ -399,6 +404,27 @@ setup_fail:
 	return ret;
 }
 
+#ifdef CONFIG_OPLUS_FEATURE_MM_FEEDBACK
+/* Zhao.Pan@MULTIMEDIA.AUDIODRIVER.HEADSETDET, 2020/08/28, Add for mm feedback */
+#define CAUSENAME_SIZE 128
+unsigned int BKDRHash(char* str, unsigned int len)
+{
+	unsigned int seed = 131; /* 31 131 1313 13131 131313 etc.. */
+	unsigned int hash = 0;
+	unsigned int i    = 0;
+
+	if (str == NULL) {
+		return 0;
+	}
+
+	for(i = 0; i < len; str++, i++) {
+		hash = (hash * seed) + (*str);
+	}
+
+	return hash;
+}
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 /**
  * pil_do_ramdump() - Ramdump an image
  * @desc: descriptor from pil_desc_init()
@@ -415,7 +441,24 @@ int pil_do_ramdump(struct pil_desc *desc,
 	struct pil_seg *seg;
 	int count = 0, map_cnt = 0, ret;
 
+#ifdef CONFIG_OPLUS_FEATURE_MM_FEEDBACK
+/* Zhao.Pan@MULTIMEDIA.AUDIODRIVER.HEADSETDET, 2020/08/28, Add for mm feedback */
+	unsigned char payload[100] = "";
+	unsigned int hashid;
+	char strHashSource[CAUSENAME_SIZE];
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 	if (desc->minidump_ss) {
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	//Wentiam.Mai@PSW.NW.EM.1248599, 2018/01/25
+	//Add for customized subsystem ramdump to skip generate dump cause by SAU
+	if (SKIP_GENERATE_RAMDUMP) {
+		pil_err(desc, "%s: Skip ramdump cuase by ap normal trigger.\n %s",
+			__func__, desc->name);
+		SKIP_GENERATE_RAMDUMP = false;
+		return -1;
+	}
+#endif
 		pr_debug("Minidump : md_ss_toc->md_ss_toc_init is 0x%x\n",
 			(unsigned int)desc->minidump_ss->md_ss_toc_init);
 		pr_debug("Minidump : md_ss_toc->md_ss_enable_status is 0x%x\n",
@@ -435,12 +478,20 @@ int pil_do_ramdump(struct pil_desc *desc,
 			(desc->minidump_ss->md_ss_toc_init == true) &&
 			(desc->minidump_ss->md_ss_enable_status ==
 				MD_SS_ENABLED)) {
+			#if !defined(OPLUS_FEATURE_MODEM_MINIDUMP) || !defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+			//Wentiam.Mai@PSW.NW.EM.1389836, 2018/05/22
+			//Add for skip mini dump encryption
 			if (desc->minidump_ss->encryption_status ==
 			    MD_SS_ENCR_DONE) {
 				pr_debug("Dumping Minidump for %s\n",
 					desc->name);
 				return pil_do_minidump(desc, minidump_dev);
 			}
+			#else
+				pr_debug("Minidump : Dumping for %s\n",
+					desc->name);
+				return pil_do_minidump(desc, minidump_dev);
+			#endif
 			pr_debug("Minidump aborted for %s\n", desc->name);
 			return -EINVAL;
 		}
@@ -472,6 +523,16 @@ int pil_do_ramdump(struct pil_desc *desc,
 	if (ret)
 		pil_err(desc, "%s: Ramdump collection failed for subsys %s rc:%d\n",
 				__func__, desc->name, ret);
+
+#ifdef CONFIG_OPLUS_FEATURE_MM_FEEDBACK
+/* Zhao.Pan@MULTIMEDIA.AUDIODRIVER.HEADSETDET, 2020/08/28, Add for mm feedback */
+	if(strlen(desc->name) > 0 && (strncmp(desc->name,"adsp",strlen(desc->name)) == 0)) {
+		strncpy(strHashSource,desc->name,strlen(desc->name));
+		hashid = BKDRHash(strHashSource,strlen(strHashSource));
+		scnprintf(payload, sizeof(payload), "payload@@%s$$fid@@%u", desc->name, hashid);
+		upload_mm_fb_kevent_to_atlas_limit(OPLUS_AUDIO_EVENTID_ADSP_CRASH, payload, OPLUS_FB_ADSP_CRASH_RATELIMIT);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	if (desc->subsys_vmid > 0)
 		ret = pil_assign_mem_to_subsys(desc, priv->region_start,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015, Sony Mobile Communications AB.
- * Copyright (c) 2012-2013, 2018-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, 2018-2019 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/interrupt.h>
@@ -570,6 +570,34 @@ static int smp2p_parse_ipc(struct qcom_smp2p *smp2p)
 	return 0;
 }
 
+#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
+static char * smp2p_get_device_node_name(const struct device_node *np)
+{
+	char *name = NULL;
+	const char *node_name;
+	size_t len;
+
+	if (!np) {
+		pr_info("%s %d : name is NULL\n", __func__, __LINE__);
+		return NULL;
+	}
+
+	pr_info("%s %d : full name is %s\n", __func__, __LINE__, np->full_name);
+	node_name = kbasename(np->full_name);
+	len = strlen(node_name);
+
+	name = (char *)kzalloc(len+1, GFP_KERNEL);
+	if(!name) {
+		pr_info("%s %d : name is NULL\n", __func__, __LINE__);
+		return NULL;
+	}
+	strncpy(name, node_name, len);
+	pr_info("%s %d : name is %s\n", __func__, __LINE__, name);
+
+	return name;
+}
+#endif
+
 static int qcom_smp2p_probe(struct platform_device *pdev)
 {
 	struct smp2p_entry *entry;
@@ -577,6 +605,9 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 	struct qcom_smp2p *smp2p;
 	const char *key;
 	int ret;
+	#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
+	char *object_name = NULL;
+	#endif
 
 	if (!ilc)
 		ilc = ipc_log_context_create(SMP2P_LOG_PAGE_CNT, "smp2p", 0);
@@ -632,7 +663,7 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 		goto release_mbox;
 
 	for_each_available_child_of_node(pdev->dev.of_node, node) {
-		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+		entry = devm_kzalloc(&pdev->dev, sizeof(*entry), GFP_KERNEL);
 		if (!entry) {
 			ret = -ENOMEM;
 			goto unwind_interfaces;
@@ -660,7 +691,19 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 		}
 	}
 
+	#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
+	object_name = smp2p_get_device_node_name(pdev->dev.of_node);
+	if(!object_name) {
+		object_name = "smp2p";
+	}
+	#endif
+
+	#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
+	smp2p->ws = wakeup_source_register(&pdev->dev, object_name);
+	#else
 	smp2p->ws = wakeup_source_register(&pdev->dev, "smp2p");
+	#endif
+
 	if (!smp2p->ws) {
 		ret = -ENOMEM;
 		goto unwind_interfaces;
@@ -669,10 +712,17 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 	/* Kick the outgoing edge after allocating entries */
 	qcom_smp2p_kick(smp2p);
 
+	#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
+	ret = devm_request_threaded_irq(&pdev->dev, smp2p->irq,
+					qcom_smp2p_isr, qcom_smp2p_intr,
+					IRQF_ONESHOT,
+					object_name, (void *)smp2p);
+	#else
 	ret = devm_request_threaded_irq(&pdev->dev, smp2p->irq,
 					qcom_smp2p_isr, qcom_smp2p_intr,
 					IRQF_ONESHOT,
 					"smp2p", (void *)smp2p);
+	#endif
 	if (ret) {
 		dev_err(&pdev->dev, "failed to request interrupt\n");
 		goto unreg_ws;
@@ -686,15 +736,11 @@ unreg_ws:
 	wakeup_source_unregister(smp2p->ws);
 
 unwind_interfaces:
-	list_for_each_entry(entry, &smp2p->inbound, node) {
+	list_for_each_entry(entry, &smp2p->inbound, node)
 		irq_domain_remove(entry->domain);
-		kfree(entry);
-	}
 
-	list_for_each_entry(entry, &smp2p->outbound, node) {
+	list_for_each_entry(entry, &smp2p->outbound, node)
 		qcom_smem_state_unregister(entry->state);
-		kfree(entry);
-	}
 
 	smp2p->out->valid_entries = 0;
 
@@ -715,15 +761,11 @@ static int qcom_smp2p_remove(struct platform_device *pdev)
 
 	wakeup_source_unregister(smp2p->ws);
 
-	list_for_each_entry(entry, &smp2p->inbound, node) {
+	list_for_each_entry(entry, &smp2p->inbound, node)
 		irq_domain_remove(entry->domain);
-		kfree(entry);
-	}
 
-	list_for_each_entry(entry, &smp2p->outbound, node) {
+	list_for_each_entry(entry, &smp2p->outbound, node)
 		qcom_smem_state_unregister(entry->state);
-		kfree(entry);
-	}
 
 	mbox_free_channel(smp2p->mbox_chan);
 
@@ -731,91 +773,6 @@ static int qcom_smp2p_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
-static int qcom_smp2p_restore(struct device *dev)
-{
-	int ret = 0;
-	struct qcom_smp2p *smp2p = dev_get_drvdata(dev);
-	struct smp2p_entry *entry;
-	struct device_node *node;
-	struct platform_device *pdev = container_of(dev, struct
-					platform_device, dev);
-
-	ret = qcom_smp2p_alloc_outbound_item(smp2p);
-	if (ret < 0)
-		goto print_err;
-
-	for_each_available_child_of_node(pdev->dev.of_node, node) {
-		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-		if (!entry) {
-			ret = -ENOMEM;
-			goto print_err;
-		}
-
-		entry->smp2p = smp2p;
-		spin_lock_init(&entry->lock);
-		ret = of_property_read_string(node, "qcom,entry-name",
-								&entry->name);
-		if (ret < 0)
-			goto rel_entry;
-
-		if (!of_property_read_bool(node, "interrupt-controller")) {
-			ret = qcom_smp2p_outbound_entry(smp2p, entry, node);
-			if (ret < 0)
-				goto rel_entry;
-			list_add(&entry->node, &smp2p->outbound);
-		} else {
-			kfree(entry);
-		}
-	}
-
-	smp2p->ws = wakeup_source_register(&pdev->dev, "smp2p");
-	enable_irq_wake(smp2p->irq);
-	/* Kick the outgoing edge after allocating entries */
-	qcom_smp2p_kick(smp2p);
-
-rel_entry:
-	kfree(entry);
-
-print_err:
-	if (ret < 0 && ret != -EEXIST)
-		dev_err(dev, "failed to alloc items ret = %d\n", ret);
-
-	return ret;
-}
-
-static int qcom_smp2p_freeze(struct device *dev)
-{
-	struct qcom_smp2p *smp2p = dev_get_drvdata(dev);
-	struct smp2p_entry *entry;
-	struct smp2p_entry *next_entry;
-
-	disable_irq_wake(smp2p->irq);
-	/* Walk through the out bound list and release state and entry */
-	list_for_each_entry_safe(entry, next_entry, &smp2p->outbound, node) {
-		qcom_smem_state_unregister(entry->state);
-		list_del(&entry->node);
-		kfree(entry);
-	}
-	INIT_LIST_HEAD(&smp2p->outbound);
-
-	/* Walk through the in bound list and reset last value */
-	list_for_each_entry_safe(entry, next_entry, &smp2p->inbound, node) {
-		entry->last_value = 0;
-	}
-	/* make null to point it to valid smem item during first interrupt */
-	smp2p->in = NULL;
-	smp2p->valid_entries = 0;
-	/* remove wakeup source */
-	wakeup_source_unregister(smp2p->ws);
-	return 0;
-}
-
-static const struct dev_pm_ops qcom_smp2p_pm_ops = {
-	.freeze = qcom_smp2p_freeze,
-	.restore = qcom_smp2p_restore,
-	.thaw = qcom_smp2p_restore,
-};
 
 static const struct of_device_id qcom_smp2p_of_match[] = {
 	{ .compatible = "qcom,smp2p" },
@@ -829,7 +786,6 @@ static struct platform_driver qcom_smp2p_driver = {
 	.driver  = {
 		.name  = "qcom_smp2p",
 		.of_match_table = qcom_smp2p_of_match,
-		.pm = &qcom_smp2p_pm_ops,
 	},
 };
 module_platform_driver(qcom_smp2p_driver);

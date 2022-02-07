@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 Oplus. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -26,6 +27,9 @@
 
 #include <linux/soc/qcom/smem.h>
 #include <linux/soc/qcom/smem_state.h>
+#ifdef CONFIG_OPLUS_FEATURE_DUMP_REASON
+#include <soc/oplus/system/dump_reason.h>
+#endif
 
 #include "peripheral-loader.h"
 
@@ -675,6 +679,12 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 	u32 scm_ret = 0;
 	int rc;
 	unsigned long pfn_start, pfn_end, pfn;
+	#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	//Wentiam.Mai@PSW.NW.EM.1389836, 2019/04/27
+	//Add for skip mini dump encryption
+	int i = 0;
+	struct md_ss_toc *toc = NULL;
+	#endif
 
 	if (d->subsys_desc.no_auth)
 		return 0;
@@ -693,6 +703,22 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 	if (rc)
 		goto err_clks;
 
+	#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	//Wentiam.Mai@PSW.NW.EM.1389836, 2019/04/27
+	//Add for skip mini dump encryption
+	//disable for TZ don't encryption
+	if ( pil->minidump_id ==3 ) {  //only check for modem . currently 3 is modem
+		pil->minidump_ss->md_ss_enable_status = 0;
+		pil->minidump_ss->encryption_status = 0;
+
+		for ( i = 0; i < pil->num_aux_minidump_ids; i++ ) {
+			toc = pil->aux_minidump[i];
+			toc->md_ss_enable_status = 0;
+			toc->encryption_status  = 0;
+		}
+	}
+	#endif
+
 	scm_ret = qcom_scm_pas_shutdown(d->pas_id);
 
 	pfn_start = pil->priv->region_start >> PAGE_SHIFT;
@@ -703,6 +729,22 @@ static int pil_shutdown_trusted(struct pil_desc *pil)
 			set_page_private(pfn_to_page(pfn), 0);
 	}
 
+	#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	//Wentiam.Mai@PSW.NW.EM.1389836, 2019/04/27
+	//Add for skip mini dump encryption
+	//disable for TZ don't encryption
+	//set back for miindump flow
+	if( pil->minidump_id == 3 ) {  //only check for modem . currently 3 is modem
+		pil->minidump_ss->md_ss_enable_status  =MD_SS_ENABLED;
+		pil->minidump_ss->encryption_status =MD_SS_ENCR_DONE;
+
+		for (i = 0; i < pil->num_aux_minidump_ids; i++) {
+			toc = pil->aux_minidump[i];
+			toc->md_ss_enable_status = MD_SS_ENABLED;
+			toc->encryption_status  = MD_SS_ENCR_DONE;
+		}
+	}
+	#endif
 	disable_unprepare_clocks(d->proxy_clks, d->proxy_clk_count);
 	disable_regulators(d, d->proxy_regs, d->proxy_reg_count, false);
 
@@ -755,11 +797,20 @@ static struct pil_reset_ops pil_ops_trusted = {
 	.deinit_image = pil_deinit_image_trusted,
 };
 
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+//Wentiam.Mai@PSW.NW.EM.1248599, 2018/01/25
+//Add for customized subsystem ramdump to skip generate dump cause by SAU
+bool SKIP_GENERATE_RAMDUMP = false;
+extern void mdmreason_set(char * buf);
+#endif
 static void log_failure_reason(const struct pil_tz_data *d)
 {
 	size_t size;
 	char *smem_reason, reason[MAX_SSR_REASON_LEN];
 	const char *name = d->subsys_desc.name;
+#ifdef CONFIG_OPLUS_FEATURE_DUMP_REASON
+	char *function_name;
+#endif
 
 	if (d->smem_id == -1)
 		return;
@@ -772,11 +823,42 @@ static void log_failure_reason(const struct pil_tz_data *d)
 	}
 	if (!smem_reason[0]) {
 		pr_err("%s SFR: (unknown, empty string found).\n", name);
+		#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+		//Liu.Wei@NETWORK.RF.10384, 2020/03/27, Add for report modem crash uevent
+		subsystem_schedule_crash_uevent_work(d->subsys, 0);
+		#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 		return;
 	}
 
 	strlcpy(reason, smem_reason, min(size, (size_t)MAX_SSR_REASON_LEN));
 	pr_err("%s subsystem failure reason: %s.\n", name, reason);
+
+#ifdef CONFIG_OPLUS_FEATURE_DUMP_REASON
+	function_name = parse_function_builtin_return_address(
+			(unsigned long)__builtin_return_address(0));
+	save_dump_reason_to_smem(reason, function_name);
+#endif
+
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+//Wentiam.Mai@PSW.NW.EM.1248599, 2018/01/25
+//Add for customized subsystem ramdump to skip generate dump cause by SAU
+	if (!strncmp(name, "modem", 4)) {
+		mdmreason_set(reason);
+
+		pr_err("oppo debug modem subsystem failure reason: %s.\n", reason);
+
+		if (strstr(reason, "OPPO_MODEM_NO_RAMDUMP_EXPECTED") ||
+			strstr(reason, "oppomsg:go_to_error_fatal")) {
+			pr_err("%s will subsys reset", __func__);
+			SKIP_GENERATE_RAMDUMP = true;
+		}
+
+		#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+		/* Liu.Wei@NETWORK.RF.10384, 2020/03/27, Add for report modem crash uevent */
+		subsystem_schedule_crash_uevent_work(d->subsys, reason);
+		#endif /* OPLUS_FEATURE_MODEM_MINIDUMP */
+	}
+#endif
 }
 
 static int subsys_shutdown(const struct subsys_desc *subsys, bool force_stop)

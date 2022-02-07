@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2011-2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 Oplus. All rights reserved.
  */
 
 #define pr_fmt(fmt) "subsys-restart: %s(): " fmt, __func__
@@ -31,6 +32,7 @@
 #include <linux/of.h>
 #include <asm/current.h>
 #include <linux/timer.h>
+#include <linux/string.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_ssr_event.h>
@@ -41,6 +43,12 @@
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
 static uint disable_restart_work;
 module_param(disable_restart_work, uint, 0644);
+
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+/* Liu.Wei@NETWORK.RF.10384, 2020/12/31, Add for report modem crash uevent */
+static struct dev_crash_report_work crash_report_wk;
+static struct workqueue_struct *crash_report_workqueue = NULL;
+#endif
 
 /* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
 #define SHUTDOWN_ACK_MAX_LOOPS	100
@@ -259,7 +267,12 @@ static ssize_t restart_level_store(struct device *dev,
 
 	for (i = 0; i < ARRAY_SIZE(restart_levels); i++)
 		if (!strncasecmp(buf, restart_levels[i], count)) {
-			subsys->restart_level = i;
+#ifndef VENDOR_EDIT
+/*zhangchangan@BSP.Kernel.stablity, 2020/07/14, open subsys crash to dump*/
+			subsys->restart_level = RESET_SUBSYS_COUPLED; //i;
+#else
+                       subsys->restart_level = i;
+#endif /*VENDOR_EDIT*/
 			return orig_count;
 		}
 	return -EPERM;
@@ -615,6 +628,10 @@ static void notify_each_subsys_device(struct subsys_device **list,
 		notif_data.enable_mini_ramdumps = enable_mini_ramdumps;
 		notif_data.no_auth = dev->desc->no_auth;
 		notif_data.pdev = pdev;
+		//yanghao@PSW.Stability for subsystem restart timeout issue 2020/12/2
+#if defined(CONFIG_QGKI) && defined(OPLUS_BUG_STABILITY)
+		notif_data.debug = 0xaa55aa55;
+#endif
 
 		trace_pil_notif("before_send_notif", notif, dev->desc->fw_name);
 		setup_timeout(dev->desc, NULL, SUBSYS_TO_HLOS);
@@ -625,10 +642,25 @@ static void notify_each_subsys_device(struct subsys_device **list,
 	}
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*lizhijie@BSP.CHG.basic. 2020/10/21 lzj add for charger*/
+#if IS_BUILTIN(CONFIG_OPLUS_CHG)
+extern void oplus_turn_off_power_when_adsp_crash(void);
+#endif
+#endif
 static int subsystem_shutdown(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
 	int ret;
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#if IS_BUILTIN(CONFIG_OPLUS_CHG)
+	/*lizhijie@BSP.CHG.basic. 2020/10/21 lzj add for charger*/
+	if (!strcmp(name, "adsp")) {
+		oplus_turn_off_power_when_adsp_crash();
+	}
+#endif
+#endif
 
 	pr_info("[%s:%d]: Shutting down %s\n",
 			current->comm, current->pid, name);
@@ -911,6 +943,12 @@ err_out:
 }
 EXPORT_SYMBOL(subsystem_put);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*lizhijie@BSP.CHG.Basic. 2020/10/02 lzj add for charger*/
+#if IS_BUILTIN(CONFIG_OPLUS_CHG)
+extern void oplus_adsp_crash_recover_work(void);
+#endif
+#endif
 static void subsystem_restart_wq_func(struct work_struct *work)
 {
 	struct subsys_device *dev = container_of(work,
@@ -991,7 +1029,12 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 	if (ret)
 		goto err;
 	notify_each_subsys_device(list, count, SUBSYS_AFTER_POWERUP, NULL);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#if IS_BUILTIN(CONFIG_OPLUS_CHG)
+/*lizhijie@BSP.CHG.Basic. 2020/10/02 lzj add for charger*/
+	oplus_adsp_crash_recover_work();
+#endif
+#endif
 	pr_info("[%s:%d]: Restart sequence for %s completed.\n",
 			current->comm, current->pid, desc->name);
 
@@ -1054,6 +1097,65 @@ static void device_restart_work_hdlr(struct work_struct *work)
 	panic("subsys-restart: Resetting the SoC - %s crashed.",
 							dev->desc->name);
 }
+
+#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+/* Liu.Wei@NETWORK.RF.10384, 2020/03/27, Add for report modem crash uevent */
+static void __subsystem_send_uevent(struct device *dev, char *reason)
+{
+	int ret_val;
+	char modem_event[] = "MODEM_EVENT=modem_failure";
+	char modem_reason[MAX_REASON_LEN] = {0};
+	char *envp[3];
+
+	envp[0] = (char *)&modem_event;
+	if (reason[0]) {
+		snprintf(modem_reason, sizeof(modem_reason), "MODEM_REASON=%s", reason);
+	} else {
+	    snprintf(modem_reason, sizeof(modem_reason), "MODEM_REASON=unkown");
+	}
+	modem_reason[MAX_REASON_LEN - 1] = 0;
+	envp[1] = (char *)&modem_reason;
+	envp[2] = 0;
+
+	if (dev) {
+		ret_val = kobject_uevent_env(&(dev->kobj), KOBJ_CHANGE, envp);
+		if (!ret_val) {
+			pr_info("modem crash:kobject_uevent_env success!\n");
+		} else {
+			pr_info("modem crash:kobject_uevent_env fail,error=%d!\n", ret_val);
+		}
+	}
+
+	return;
+}
+
+static void subsystem_send_uevent(struct work_struct *wk)
+{
+	struct dev_crash_report_work  *crash_report_wk = container_of(wk, struct dev_crash_report_work, work);
+
+	if(crash_report_wk->crash_dev)
+		__subsystem_send_uevent(&(crash_report_wk->crash_dev->dev), (char*)&crash_report_wk->crash_reason);
+
+	return;
+}
+
+void subsystem_schedule_crash_uevent_work(struct subsys_device *dev, char *reason)
+{
+	crash_report_wk.crash_dev = dev;
+
+	memset((void*)&crash_report_wk.crash_reason, 0, sizeof(crash_report_wk.crash_reason));
+	if (reason) {
+		strlcpy((char*)&crash_report_wk.crash_reason, reason, sizeof(crash_report_wk.crash_reason));
+	}
+
+	if (crash_report_workqueue) {
+		queue_work(crash_report_workqueue, &(crash_report_wk.work));
+	}
+
+	return;
+}
+EXPORT_SYMBOL(subsystem_schedule_crash_uevent_work);
+#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 
 int subsystem_restart_dev(struct subsys_device *dev)
 {
@@ -1448,6 +1550,16 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	subsys->dev.bus = &subsys_bus_type;
 	subsys->dev.release = subsys_device_release;
 	subsys->notif_state = -1;
+#if IS_ENABLED(CONFIG_OPLUS_BUG_STABILITY_EFFECTON_QGKI)
+	/*YiXue.Ge@PSW.BSP.Kernel.Driver,2017/05/15,
+	 * Add for init subsyst restart level as RESET_SUBSYS_COUPLED at mp build
+	 */
+	#ifndef CONFIG_OPPO_DAILY_BUILD
+		#ifndef CONFIG_OPPO_SPECIAL_BUILD
+		subsys->restart_level = RESET_SUBSYS_COUPLED;
+		#endif
+	#endif
+#endif
 	subsys->desc->sysmon_pid = -1;
 	subsys->desc->state = NULL;
 	strlcpy(subsys->desc->fw_name, desc->name,
@@ -1473,6 +1585,8 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	dev_set_name(&subsys->dev, "subsys%d", subsys->id);
 
 	mutex_init(&subsys->track.lock);
+
+	subsys->restart_level = RESET_SUBSYS_COUPLED;
 
 	ret = device_register(&subsys->dev);
 	if (ret) {
@@ -1601,6 +1715,16 @@ static int __init subsys_restart_init(void)
 {
 	int ret;
 
+	#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	/* Liu.Wei@NETWORK.RF.10384, 2020/12/31, Add for report modem crash uevent by workqueue */
+	crash_report_workqueue = create_singlethread_workqueue("crash_report_workqueue");
+	if (crash_report_workqueue == NULL) {
+		pr_err("crash_report_workqueue alloc fail\n");
+	} else {
+		INIT_WORK(&(crash_report_wk.work), subsystem_send_uevent);
+	}
+	#endif
+
 	ssr_wq = alloc_workqueue("ssr_wq",
 		WQ_UNBOUND | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 0);
 	BUG_ON(!ssr_wq);
@@ -1638,6 +1762,10 @@ static void __exit subsys_restart_exit(void)
 	class_destroy(char_class);
 	bus_unregister(&subsys_bus_type);
 	destroy_workqueue(ssr_wq);
+	#if defined(OPLUS_FEATURE_MODEM_MINIDUMP) && defined(CONFIG_OPLUS_FEATURE_MODEM_MINIDUMP)
+	/* Liu.Wei@NETWORK.RF.10384, 2020/12/31, Add for report modem crash uevent by workqueue */
+	destroy_workqueue(crash_report_workqueue);
+	#endif
 }
 module_exit(subsys_restart_exit);
 
