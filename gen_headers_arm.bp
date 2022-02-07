@@ -384,7 +384,6 @@ gen_headers_out_arm = [
     "linux/msdos_fs.h",
     "linux/msg.h",
     "linux/msm_dsps.h",
-    "linux/msm_geni_serial.h",
     "linux/msm_ion.h",
     "linux/msm_ion_ids.h",
     "linux/msm_ipa.h",
@@ -688,6 +687,10 @@ gen_headers_out_arm = [
     "scsi/scsi_bsg_ufs.h",
     "scsi/scsi_netlink.h",
     "scsi/scsi_netlink_fc.h",
+//#ifdef OPLUS_FEATURE_UFSPLUS
+//tianwen@BSP.Storage.ufs, 2020/09/08, modify for ufs plus
+    "scsi/ufs/ioctl.h",
+//#endif /* OPLUS_FEATURE_UFSPLUS */
     "sound/asequencer.h",
     "sound/asoc.h",
     "sound/asound.h",
@@ -1006,6 +1009,11 @@ gen_headers_out_arm = [
     "camera/media/cam_sensor.h",
     "camera/media/cam_sync.h",
     "camera/media/cam_tfe.h",
+//ifdef VENDOR_EDIT
+//lixin@Camera.Drv, 2020/05/25, modify for camera kernel decoupling
+    "camera/oplus/media/oplus_cam_sensor.h",
+    "camera/oplus/media/oplus_cam_defs.h",
+//endif
     "display/drm/msm_drm_pp.h",
     "display/drm/sde_drm.h",
     "display/media/mmm_color_fmt.h",
@@ -1013,6 +1021,9 @@ gen_headers_out_arm = [
     "display/hdcp/msm_hdmi_hdcp_mgr.h",
     "vidc/media/msm_media_info.h",
     "vidc/media/msm_vidc_utils.h",
+//ifdef OPLUS_FEATURE_PXLW_IRIS5
+    "display/drm/msm_drm_iris.h",
+//endif
 ]
 
 genrule {
