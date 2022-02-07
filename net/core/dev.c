@@ -138,6 +138,11 @@
 #include <linux/hrtimer.h>
 #include <linux/netfilter_ingress.h>
 #include <linux/crash_dump.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+#include <linux/imq.h>
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 #include <linux/sctp.h>
 #include <net/udp_tunnel.h>
 #include <linux/net_namespace.h>
@@ -3196,6 +3201,13 @@ static int xmit_one(struct sk_buff *skb, struct net_device *dev,
 	int rc;
 
 	if (dev_nit_active(dev))
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+	if ((!list_empty(&ptype_all) || !list_empty(&dev->ptype_all)) &&
+		!(skb->imq_flags & IMQ_F_ENQUEUE))
+#else /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+	if (!list_empty(&ptype_all) || !list_empty(&dev->ptype_all))
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
 		dev_queue_xmit_nit(skb, dev);
 
 	len = skb->len;
@@ -3233,6 +3245,11 @@ out:
 	*ret = rc;
 	return skb;
 }
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED)
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+EXPORT_SYMBOL_GPL(dev_hard_start_xmit);
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
+
 
 static struct sk_buff *validate_xmit_vlan(struct sk_buff *skb,
 					  netdev_features_t features)
@@ -4730,11 +4747,6 @@ void process_embms_receive_skb(struct sk_buff *skb)
 		embms_recv(skb);
 }
 
-#ifdef CONFIG_ENABLE_SFE
-int (*athrs_fast_nat_recv)(struct sk_buff *skb) __rcu __read_mostly;
-EXPORT_SYMBOL(athrs_fast_nat_recv);
-#endif
-
 static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 				    struct packet_type **ppt_prev)
 {
@@ -4745,9 +4757,6 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
-#ifdef CONFIG_ENABLE_SFE
-	int (*fast_recv)(struct sk_buff *skb);
-#endif
 
 	net_timestamp_check(!netdev_tstamp_prequeue, skb);
 
@@ -4821,16 +4830,6 @@ skip_taps:
 	process_embms_receive_skb(skb);
 
 skip_classify:
-#ifdef CONFIG_ENABLE_SFE
-	fast_recv = rcu_dereference(athrs_fast_nat_recv);
-	if (fast_recv) {
-		if (fast_recv(skb)) {
-			ret = NET_RX_SUCCESS;
-			goto out;
-		}
-	}
-#endif
-
 	if (pfmemalloc && !skb_pfmemalloc_protocol(skb))
 		goto drop;
 

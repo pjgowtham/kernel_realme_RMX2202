@@ -80,6 +80,9 @@
 #include <linux/jump_label_ratelimit.h>
 #include <net/busy_poll.h>
 #include <trace/hooks/net.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_APP_MONITOR)
+#include <trace/hooks/vh_oplus_app_monitor.h>
+#endif
 
 int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 
@@ -109,6 +112,18 @@ int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 #define TCP_REMNANT (TCP_FLAG_FIN|TCP_FLAG_URG|TCP_FLAG_SYN|TCP_FLAG_PSH)
 #define TCP_HP_BITS (~(TCP_RESERVED_BITS|TCP_FLAG_PSH))
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_NWPOWER)
+//Asiga@PSW.NW.DATA.2120730, 2019/06/26, add for classify glink wakeup services and count IPA wakeup.
+void (*match_tcp_input_retrans)(struct sock *sk) = NULL;
+EXPORT_SYMBOL(match_tcp_input_retrans);
+#endif /* CONFIG_OPLUS_FEATURE_NWPOWER */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_SLA)
+//#ifdef OPLUS_FEATURE_WIFI_SLA
+//HuangJunyuan@CONNECTIVITY.WIFI.INTERNET.1197891, 2018/04/10,Add code for appo sla function
+void (*statistic_dev_rtt)(struct sock *sk,long rtt) = NULL;
+EXPORT_SYMBOL(statistic_dev_rtt);
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_SLA */
 #define REXMIT_NONE	0 /* no loss recovery to do */
 #define REXMIT_LOST	1 /* retransmit packets marked lost */
 #define REXMIT_NEW	2 /* FRTO-style transmit of unsent/new packets */
@@ -719,6 +734,10 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 	if (skb->len >= 128)
 		tcp_grow_window(sk, skb);
+
+	#if IS_ENABLED(CONFIG_OPLUS_FEATURE_APP_MONITOR)
+	trace_android_vh_oplus_app_monitor_update(sk, skb, 0, 0);
+	#endif /* OPLUS_FEATURE_APP_MONITOR */
 }
 
 /* Called to compute a smoothed rtt estimate. The data fed to this
@@ -785,6 +804,14 @@ static void tcp_rtt_estimator(struct sock *sk, long mrtt_us)
 
 			tcp_bpf_rtt(sk);
 		}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_WIFI_SLA)
+		//HuangJunyuan@CONNECTIVITY.WIFI.NETWORK.4502, 2018/04/10,
+		//Add code for appo sla function
+		if(TCP_ESTABLISHED == sk->sk_state && NULL != statistic_dev_rtt){
+				statistic_dev_rtt(sk,mrtt_us);
+		}
+#endif /* CONFIG_OPLUS_FEATURE_WIFI_SLA */
+
 	} else {
 		/* no previous measure. */
 		srtt = m << 3;		/* take the measured time to be rtt */
@@ -4847,6 +4874,12 @@ queue_and_out:
 
 	if (!after(TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt)) {
 		tcp_rcv_spurious_retrans(sk, skb);
+		#if IS_ENABLED(CONFIG_OPLUS_FEATURE_NWPOWER)
+		//Asiga@PSW.NW.DATA.2120730, 2019/06/26, add for classify glink wakeup services and count IPA wakeup.
+		if (match_tcp_input_retrans != NULL) {
+			match_tcp_input_retrans(sk);
+		}
+		#endif /* CONFIG_OPLUS_FEATURE_NWPOWER */
 		/* A retransmit, 2nd most common case.  Force an immediate ack. */
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOST);
 		tcp_dsack_set(sk, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq);
@@ -5898,6 +5931,17 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 	struct tcp_fastopen_cookie foc = { .len = -1 };
 	int saved_clamp = tp->rx_opt.mss_clamp;
 	bool fastopen_fail;
+#if IS_ENABLED(CONFIG_OPLUS_BUG_STABILITY)
+//ZhaoMengqing@CONNECTIVITY.WIFI.INTERNET.1394484, 2019/04/02,add for: When find TCP SYN-ACK Timestamp value error, just do not use Timestamp
+        static int ts_error_count = 0;
+        int ts_error_threshold = sysctl_tcp_ts_control[0];
+
+        //when network change (frameworks set sysctl_tcp_ts_control[1] = 1), clear ts_error_count
+        if (sysctl_tcp_ts_control[1] == 1) {
+                ts_error_count = 0;
+                sysctl_tcp_ts_control[1] = 0;
+        }
+#endif /* CONFIG_OPLUS_BUG_STABILITY */
 
 	tcp_parse_options(sock_net(sk), skb, &tp->rx_opt, 0, &foc);
 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
@@ -5921,9 +5965,28 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 			     tcp_time_stamp(tp))) {
 			NET_INC_STATS(sock_net(sk),
 					LINUX_MIB_PAWSACTIVEREJECTED);
+#if IS_ENABLED(CONFIG_OPLUS_BUG_STABILITY)
+//ZhaoMengqing@CONNECTIVITY.WiFi.Network.internet.1394484, 2019/04/02,add for: When find TCP SYN-ACK Timestamp value error, just do not use Timestamp
+//if count > threshold, disable TCP Timestamps
+			if (ts_error_threshold > 0) {
+				ts_error_count++;
+				if (ts_error_count >= ts_error_threshold) {
+					sock_net(sk)->ipv4.sysctl_tcp_timestamps = 0;
+					ts_error_count = 0;
+				}
+			}
+#endif /* CONFIG_OPLUS_BUG_STABILITY */
 			goto reset_and_undo;
 		}
 
+#if IS_ENABLED(CONFIG_OPLUS_BUG_STABILITY)
+//ZhaoMengqing@CONNECTIVITY.WiFi.Network.internet.1394484, 2019/04/02,add for: When find TCP SYN-ACK Timestamp value error, just do not use Timestamp
+//if other connection's Timestamp is correct, the network environment may be OK
+                if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
+                    ts_error_threshold > 0 && ts_error_count > 0) {
+                    ts_error_count--;
+                }
+#endif /* CONFIG_OPLUS_BUG_STABILITY */
 		/* Now ACK is acceptable.
 		 *
 		 * "If the RST bit is set

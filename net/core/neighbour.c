@@ -145,8 +145,13 @@ static void neigh_update_gc_list(struct neighbour *n)
 		atomic_dec(&n->tbl->gc_entries);
 	} else if (!exempt_from_gc && !on_gc_list) {
 		/* add entries to the tail; cleaning removes from the front */
-		list_add_tail(&n->gc_list, &n->tbl->gc_list);
-		atomic_inc(&n->tbl->gc_entries);
+		if(n->dead) {
+			pr_err("neigh %p is dead, but still want to be added to gc_list\n", n);
+			dump_stack();
+		} else {
+			list_add_tail(&n->gc_list, &n->tbl->gc_list);
+			atomic_inc(&n->tbl->gc_entries);
+		}
 	}
 
 	write_unlock(&n->lock);
@@ -1251,13 +1256,16 @@ static int __neigh_update(struct neighbour *neigh, const u8 *lladdr,
 	old    = neigh->nud_state;
 	err    = -EPERM;
 
+	if (neigh->dead) {
+		NL_SET_ERR_MSG(extack, "Neighbor entry is now dead");
+		pr_err("chinagar: Hit the fix path\n");
+		new=old;
+		goto out;
+	}
+
 	if (!(flags & NEIGH_UPDATE_F_ADMIN) &&
 	    (old & (NUD_NOARP | NUD_PERMANENT)))
 		goto out;
-	if (neigh->dead) {
-		NL_SET_ERR_MSG(extack, "Neighbor entry is now dead");
-		goto out;
-	}
 
 	ext_learn_change = neigh_update_ext_learned(neigh, flags, &notify);
 

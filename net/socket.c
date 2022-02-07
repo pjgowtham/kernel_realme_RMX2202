@@ -405,6 +405,14 @@ struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 
 	sock->file = file;
 	file->private_data = sock;
+
+	#if IS_ENABLED(CONFIG_OPLUS_FEATURE_NWPOWER)
+	//Asiga@PSW.NW.DATA.2120730, 2019/06/26, add for classify glink wakeup services and count IPA wakeup.
+	if (sock->sk) {
+		sock->sk->sk_oplus_pid = current->tgid;
+	}
+	#endif /* CONFIG_OPLUS_FEATURE_NWPOWER */
+
 	return file;
 }
 EXPORT_SYMBOL(sock_alloc_file);

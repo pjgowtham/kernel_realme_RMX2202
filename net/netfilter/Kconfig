@@ -342,18 +342,6 @@ config NF_CONNTRACK_SIP
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
-config NF_CONNTRACK_SIP_SEGMENTATION
-	tristate "SIP protocol segmentation support"
-	depends on NF_CONNTRACK_SIP
-	default m if NETFILTER_ADVANCED=n
-	help
-	  Linux Kernel SIP ALG did not handle Segmented TCP Packets
-	  because of which SIP communication could not be established
-	  for some clients. This special type supports SIP segmentation
-	  packets
-
-	  To compile it as a module, choose M here.  If unsure, say N.
-
 config NF_CONNTRACK_TFTP
 	tristate "TFTP protocol support"
 	depends on NETFILTER_ADVANCED
@@ -940,6 +928,27 @@ config NETFILTER_XT_TARGET_LOG
 	  any iptables table which records the packet header to the syslog.
 
 	  To compile it as a module, choose M here.  If unsure, say N.
+
+#HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+config OPLUS_FEATURE_WIFI_LIMMITBGSPEED
+	bool "Add for limit speed function"
+	help
+	  Add for limit speed function.
+      
+#ifdef OPLUS_FEATURE_WIFI_LIMMITBGSPEED
+#HuangJunyuan@CONNECTIVITY.WIFI.INTERNET, 2018/06/26, Add for limit speed function
+config NETFILTER_XT_TARGET_IMQ
+    tristate '"IMQ" target support'
+	depends on NETFILTER_XTABLES
+	depends on IP_NF_MANGLE || IP6_NF_MANGLE
+	select IMQ
+	default y
+        help
+          This option adds a `IMQ' target which is used to specify if and
+          to which imq device packets should get enqueued/dequeued.
+
+          To compile it as a module, choose M here.  If unsure, say N.
+#endif /* OPLUS_FEATURE_WIFI_LIMMITBGSPEED */
 
 config NETFILTER_XT_TARGET_MARK
 	tristate '"MARK" target support'
