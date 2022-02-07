@@ -313,5 +313,11 @@ EXPORT_SYMBOL_GPL(cfi_failure_handler);
 
 void __cfi_check_fail(void *data, void *ptr)
 {
-	handle_cfi_failure(ptr);
+	/* #ifdef OPLUS_BUG_STABILITY */
+	/*Liping-M@PSW.MM.LCD.Display.Stability, 2020/08/28, temp modification for cfi */
+	/* handle_cfi_failure(ptr); */
+#ifndef CONFIG_QGKI
+	pr_err("__cfi_check_fail\n");
+#endif
+	/* #endif */
 }

@@ -1155,6 +1155,9 @@ struct rq {
 	int			idle_state_idx;
 #endif
 #endif
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	struct list_head ux_thread_list;
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -3004,7 +3007,6 @@ static inline struct walt_related_thread_group
 	return rcu_dereference(p->wts.grp);
 }
 
-/* applying the task threshold for all types of low latency tasks. */
 static inline bool walt_low_latency_task(struct task_struct *p)
 {
 	return p->wts.low_latency &&
