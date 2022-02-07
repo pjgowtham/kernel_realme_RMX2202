@@ -18,10 +18,6 @@ ccflags-vdso := \
 	$(filter -mno-loongson-%,$(KBUILD_CFLAGS)) \
 	-D__VDSO__
 
-ifndef CONFIG_64BIT
-ccflags-vdso += -DBUILD_VDSO32
-endif
-
 ifdef CONFIG_CC_IS_CLANG
 ccflags-vdso += $(filter --target=%,$(KBUILD_CFLAGS))
 endif
