@@ -31,15 +31,18 @@
 #include "asoc/msm-cdc-pinctrl.h"
 #include "asoc/wcd-mbhc-v2.h"
 #include "codecs/wcd938x/wcd938x-mbhc.h"
-#include "codecs/wcd937x/wcd937x-mbhc.h"
 #include "codecs/wsa883x/wsa883x.h"
 #include "codecs/wcd938x/wcd938x.h"
-#include "codecs/wcd937x/wcd937x.h"
 #include "codecs/bolero/bolero-cdc.h"
 #include <dt-bindings/sound/audio-codec-port-types.h>
 #include "codecs/bolero/wsa-macro.h"
 #include "lahaina-port-config.h"
 #include "msm_dailink.h"
+
+#ifdef OPLUS_FEATURE_AUDIO_FTM
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.FEATURE.FTM, 2020/08/03, Add for Hostless*/
+#include "dailink_extends.h"
+#endif /* OPLUS_FEATURE_AUDIO_FTM */
 
 #define DRV_NAME "lahaina-asoc-snd"
 #define __CHIPSET__ "LAHAINA "
@@ -72,7 +75,14 @@
 #define CODEC_EXT_CLK_RATE          9600000
 #define ADSP_STATE_READY_TIMEOUT_MS 3000
 #define DEV_NAME_STR_LEN            32
+#ifndef OPLUS_ARCH_EXTENDS
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.HEADSETDET.1226699, 2017/03/06,
+ *Modify for headset detect.
+ */
 #define WCD_MBHC_HS_V_MAX           1600
+#else /* OPLUS_ARCH_EXTENDS */
+#define WCD_MBHC_HS_V_MAX           1700
+#endif /* OPLUS_ARCH_EXTENDS */
 
 #define TDM_CHANNEL_MAX		8
 
@@ -830,40 +840,6 @@ static SOC_ENUM_SINGLE_EXT_DECL(va_cdc_dma_tx_1_sample_rate,
 static SOC_ENUM_SINGLE_EXT_DECL(va_cdc_dma_tx_2_sample_rate,
 				cdc_dma_sample_rate_text);
 
-/* WCD9370 */
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_0_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_1_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_2_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_3_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_5_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_0_sample_rate,
-				cdc80_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_1_sample_rate,
-				cdc80_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_2_sample_rate,
-				cdc80_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_3_sample_rate,
-				cdc80_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc70_dma_rx_5_sample_rate,
-				cdc80_dma_sample_rate_text);
-
-/* WCD9375 */
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_0_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_1_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_2_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_3_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_5_format, bit_format_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_0_sample_rate,
-				cdc_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_1_sample_rate,
-				cdc_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_2_sample_rate,
-				cdc_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_3_sample_rate,
-				cdc_dma_sample_rate_text);
-static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc75_dma_rx_5_sample_rate,
-				cdc_dma_sample_rate_text);
-
 /* WCD9380 */
 static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc80_dma_rx_0_format, cdc80_bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(rx_cdc80_dma_rx_1_format, cdc80_bit_format_text);
@@ -931,7 +907,14 @@ static int msm_int_wsa_init(struct snd_soc_pcm_runtime*);
 static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.read_fw_bin = false,
 	.calibration = NULL,
+	#ifndef OPLUS_ARCH_EXTENDS
+	/* Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.HEADSETDET.959366, 2017/04/10,
+	 * Modify for headset detect.
+	 */
 	.detect_extn_cable = true,
+	#else /* OPLUS_ARCH_EXTENDS */
+	.detect_extn_cable = false,
+	#endif /* OPLUS_ARCH_EXTENDS */
 	.mono_stero_detection = false,
 	.swap_gnd_mic = NULL,
 	.hs_ext_micbias = true,
@@ -948,7 +931,12 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.mbhc_micbias = MIC_BIAS_2,
 	.anc_micbias = MIC_BIAS_2,
 	.enable_anc_mic_detect = false,
+	#ifndef OPLUS_ARCH_EXTENDS
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.HEADSETDET, 2019/08/31, Modify for disable moisture detect. bit2~3*/
 	.moisture_duty_cycle_en = true,
+	#else /*OPLUS_ARCH_EXTENDS*/
+	.moisture_duty_cycle_en = false,
+	#endif /*OPLUS_ARCH_EXTENDS*/
 };
 
 /* set audio task affinity to core 1 & 2 */
@@ -3805,72 +3793,6 @@ static const struct snd_kcontrol_new msm_int_snd_controls[] = {
 			cdc_dma_tx_sample_rate_put),
 };
 
-static const struct snd_kcontrol_new msm_int_wcd9370_snd_controls[] = {
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 Format", rx_cdc70_dma_rx_0_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_1 Format", rx_cdc70_dma_rx_1_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_2 Format", rx_cdc70_dma_rx_2_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_3 Format", rx_cdc70_dma_rx_3_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_5 Format", rx_cdc70_dma_rx_5_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 SampleRate",
-			rx_cdc70_dma_rx_0_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_1 SampleRate",
-			rx_cdc70_dma_rx_1_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_2 SampleRate",
-			rx_cdc70_dma_rx_2_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_3 SampleRate",
-			rx_cdc70_dma_rx_3_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_5 SampleRate",
-			rx_cdc70_dma_rx_5_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-};
-
-static const struct snd_kcontrol_new msm_int_wcd9375_snd_controls[] = {
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 Format", rx_cdc75_dma_rx_0_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_1 Format", rx_cdc75_dma_rx_1_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_2 Format", rx_cdc75_dma_rx_2_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_3 Format", rx_cdc75_dma_rx_3_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_5 Format", rx_cdc75_dma_rx_5_format,
-			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 SampleRate",
-			rx_cdc75_dma_rx_0_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_1 SampleRate",
-			rx_cdc75_dma_rx_1_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_2 SampleRate",
-			rx_cdc75_dma_rx_2_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_3 SampleRate",
-			rx_cdc75_dma_rx_3_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-	SOC_ENUM_EXT("RX_CDC_DMA_RX_5 SampleRate",
-			rx_cdc75_dma_rx_5_sample_rate,
-			cdc_dma_rx_sample_rate_get,
-			cdc_dma_rx_sample_rate_put),
-};
-
 static const struct snd_kcontrol_new msm_int_wcd9380_snd_controls[] = {
 	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 Format", rx_cdc80_dma_rx_0_format,
 			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
@@ -4774,7 +4696,13 @@ static bool msm_usbc_swap_gnd_mic(struct snd_soc_component *component, bool acti
 	if (!pdata->fsa_handle)
 		return false;
 
+	#ifndef OPLUS_ARCH_EXTENDS
+	/*Zhao.Pan@MULTIMEDIA.AUDIODRIVER.HEADSETDET.2573181, 2019/11/23,
+	 *fsa4480_switch_event will return 0 when excute success.*/
 	return fsa4480_switch_event(pdata->fsa_handle, FSA_MIC_GND_SWAP);
+	#else
+	return (0 == fsa4480_switch_event(pdata->fsa_handle, FSA_MIC_GND_SWAP));
+	#endif /* OPLUS_ARCH_EXTENDS */
 }
 
 static bool msm_swap_gnd_mic(struct snd_soc_component *component, bool active)
@@ -5036,7 +4964,6 @@ static void lahaina_tdm_snd_shutdown(struct snd_pcm_substream *substream)
 	}
 }
 
-#ifndef CONFIG_AUXPCM_DISABLE
 static int lahaina_aux_snd_startup(struct snd_pcm_substream *substream)
 {
 	int ret = 0;
@@ -5098,7 +5025,6 @@ static void lahaina_aux_snd_shutdown(struct snd_pcm_substream *substream)
 		}
 	}
 }
-#endif
 
 static int msm_snd_cdc_dma_startup(struct snd_pcm_substream *substream)
 {
@@ -5203,14 +5129,8 @@ static void set_cps_config(struct snd_soc_pcm_runtime *rtd,
 		/* bits 24:27 carry read length in bytes */
 		val |= 1 << 24;
 
-		/* bits 16:19 carry command id */
-		val |= (i*2) << 16;
-
 		/* Update dev num in packed reg addr */
 		pdata->cps_config.spkr_dep_cfg[i].vbatt_pkd_reg_addr |= val;
-
-		val &= 0xFF0FFFF;
-		val |= ((i*2)+1) << 16;
 		pdata->cps_config.spkr_dep_cfg[i].temp_pkd_reg_addr |= val;
 		i++;
 		ch_configured++;
@@ -5584,12 +5504,10 @@ err:
 	return ret;
 }
 
-#ifndef CONFIG_AUXPCM_DISABLE
 static struct snd_soc_ops lahaina_aux_be_ops = {
 	.startup = lahaina_aux_snd_startup,
 	.shutdown = lahaina_aux_snd_shutdown
 };
-#endif
 
 static struct snd_soc_ops lahaina_tdm_be_ops = {
 	.hw_params = lahaina_tdm_snd_hw_params,
@@ -5774,6 +5692,10 @@ static void *def_wcd_mbhc_cal(void)
 	btn_high = ((void *)&btn_cfg->_v_btn_low) +
 		(sizeof(btn_cfg->_v_btn_low[0]) * btn_cfg->num_btn);
 
+	#ifndef OPLUS_ARCH_EXTENDS
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.HEADSETDET.1226706, 2017/03/03,
+	 *Modify for headset button threshold.
+	 */
 	btn_high[0] = 75;
 	btn_high[1] = 150;
 	btn_high[2] = 237;
@@ -5782,6 +5704,16 @@ static void *def_wcd_mbhc_cal(void)
 	btn_high[5] = 500;
 	btn_high[6] = 500;
 	btn_high[7] = 500;
+	#else /* OPLUS_ARCH_EXTENDS */
+	btn_high[0] = 130;		/* Hook ,0 ~ 160 Ohm*/
+	btn_high[1] = 131;
+	btn_high[2] = 253;		/* Volume + ,160 ~ 360 Ohm*/
+	btn_high[3] = 425;		/* Volume - ,360 ~ 680 Ohm*/
+	btn_high[4] = 426;
+	btn_high[5] = 426;
+	btn_high[6] = 426;
+	btn_high[7] = 426;
+	#endif /* OPLUS_ARCH_EXTENDS */
 
 	return wcd_mbhc_cal;
 }
@@ -6209,6 +6141,10 @@ static struct snd_soc_dai_link msm_common_dai_links[] = {
 		.name = "TX3_CDC_DMA Hostless",
 		.stream_name = "TX3_CDC_DMA Hostless",
 		.dynamic = 1,
+		#ifdef OPLUS_FEATURE_AUDIO_FTM
+		/* Yongpei.Yao@MULTIMEDIA.AUDIODRIVER.FEATURE.FTM, 2020/04/14, Add for loopback test*/
+		.dpcm_playback = 1,
+		#endif /* OPLUS_FEATURE_AUDIO_FTM */
 		.dpcm_capture = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			    SND_SOC_DPCM_TRIGGER_POST},
@@ -6384,6 +6320,10 @@ static struct snd_soc_dai_link msm_common_misc_fe_dai_links[] = {
 		.id = MSM_FRONTEND_DAI_MULTIMEDIA10,
 		SND_SOC_DAILINK_REG(multimedia10),
 	},
+	#ifdef OPLUS_FEATURE_AUDIO_FTM
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.FEATURE.FTM, 2020/08/03, Add for Hostless to the end*/
+	TX_CDC_DMA_HOSTLESS_DAILINK("TX4_CDC_DMA Hostless", "TX4_CDC_DMA Hostless", tx4_cdcdma_hostless),
+	#endif /* OPLUS_FEATURE_AUDIO_FTM */
 };
 
 static struct snd_soc_dai_link msm_common_be_dai_links[] = {
@@ -6878,7 +6818,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 	},
 };
 
-#ifndef CONFIG_AUXPCM_DISABLE
 static struct snd_soc_dai_link msm_auxpcm_be_dai_links[] = {
 	/* Primary AUX PCM Backend DAI Links */
 	{
@@ -7021,7 +6960,6 @@ static struct snd_soc_dai_link msm_auxpcm_be_dai_links[] = {
 		SND_SOC_DAILINK_REG(sen_auxpcm_tx),
 	},
 };
-#endif
 
 static struct snd_soc_dai_link msm_wsa_cdc_dma_be_dai_links[] = {
 	/* WSA CDC DMA Backend DAI Links */
@@ -7242,15 +7180,38 @@ static struct snd_soc_dai_link msm_afe_rxtx_lb_be_dai_link[] = {
 	},
 };
 
+#ifdef VENDOR_EDIT
+//Wei.Hua@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2020/05/25, add for tfa9874 bringup
+SND_SOC_DAILINK_DEFS(tfa98xx_tert_mi2s_rx,
+	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.2")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("tfa98xx.4-0035", "tfa98xx-aif-4-35"),
+			COMP_CODEC("tfa98xx.4-0034", "tfa98xx-aif-4-34"),),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
+
+static struct snd_soc_dai_link tfa98xx_stereo_be_dai_links[] = {
+	{
+		.name = LPASS_BE_TERT_MI2S_RX,
+		.stream_name = "Tertiary MI2S Playback",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.id = MSM_BACKEND_DAI_TERTIARY_MI2S_RX,
+		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		SND_SOC_DAILINK_REG(tfa98xx_tert_mi2s_rx),
+		.num_codecs = ARRAY_SIZE(tfa98xx_tert_mi2s_rx_codecs),
+	},
+};
+#endif /* VENDOR_EDIT */
+
 static struct snd_soc_dai_link msm_lahaina_dai_links[
 			ARRAY_SIZE(msm_common_dai_links) +
 			ARRAY_SIZE(msm_bolero_fe_dai_links) +
 			ARRAY_SIZE(msm_common_misc_fe_dai_links) +
 			ARRAY_SIZE(msm_common_be_dai_links) +
 			ARRAY_SIZE(msm_mi2s_be_dai_links) +
-#ifndef CONFIG_AUXPCM_DISABLE
 			ARRAY_SIZE(msm_auxpcm_be_dai_links) +
-#endif
 			ARRAY_SIZE(msm_wsa_cdc_dma_be_dai_links) +
 			ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links) +
 			ARRAY_SIZE(msm_va_cdc_dma_be_dai_links) +
@@ -7509,7 +7470,6 @@ static int msm_snd_card_late_probe(struct snd_soc_card *card)
 	struct msm_asoc_mach_data *pdata;
 	int ret = 0;
 	void *mbhc_calibration;
-	bool is_wcd937x = false;
 
 	pdata = snd_soc_card_get_drvdata(card);
 	if (!pdata)
@@ -7528,23 +7488,15 @@ static int msm_snd_card_late_probe(struct snd_soc_card *card)
 
 	component = snd_soc_rtdcom_lookup(rtd, WCD938X_DRV_NAME);
 	if (!component) {
-		component = snd_soc_rtdcom_lookup(rtd, WCD937X_DRV_NAME);
-		if (!component) {
-			pr_err("%s component is NULL\n", __func__);
-			return -EINVAL;
-		} else {
-			is_wcd937x = true;
-		}
+		pr_err("%s component is NULL\n", __func__);
+		return -EINVAL;
 	}
 
 	mbhc_calibration = def_wcd_mbhc_cal();
 	if (!mbhc_calibration)
 		return -ENOMEM;
 	wcd_mbhc_cfg.calibration = mbhc_calibration;
-	if (!is_wcd937x)
-		ret = wcd938x_mbhc_hs_detect(component, &wcd_mbhc_cfg);
-	else
-		ret = wcd937x_mbhc_hs_detect(component, &wcd_mbhc_cfg);
+	ret = wcd938x_mbhc_hs_detect(component, &wcd_mbhc_cfg);
 	if (ret) {
 		dev_err(component->dev, "%s: mbhc hs detect failed, err:%d\n",
 			__func__, ret);
@@ -7566,9 +7518,17 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 	int total_links = 0;
 	int rc = 0;
 	u32 mi2s_audio_intf = 0;
+	u32 auxpcm_audio_intf = 0;
 	u32 val = 0;
 	u32 wcn_btfm_intf = 0;
 	const struct of_device_id *match;
+#ifdef VENDOR_EDIT
+	//Wei.Hua@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2020/05/25, add for tfa9874 bringup
+	int i;
+	const char *product_name = NULL;
+	const char *oppo_speaker_type = "oppo,speaker-pa";
+	struct snd_soc_dai_link *temp_link;
+#endif /* VENDOR_EDIT */
 	u32 wsa_max_devs = 0;
 
 	match = of_match_node(lahaina_asoc_machine_of_match, dev->of_node);
@@ -7643,6 +7603,25 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 				__func__);
 		} else {
 			if (mi2s_audio_intf) {
+#ifdef VENDOR_EDIT
+				//Wei.Hua@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2020/05/25, add for tfa9874 bringup
+				if (!of_property_read_string(dev->of_node, oppo_speaker_type,
+						&product_name)) {
+					pr_err("%s: custom speaker product %s\n", __func__, product_name);
+					for (i = 0; i < ARRAY_SIZE(msm_mi2s_be_dai_links); i++) {
+						temp_link = &msm_mi2s_be_dai_links[i];
+						if (temp_link->id == MSM_BACKEND_DAI_TERTIARY_MI2S_RX) {
+							#ifdef CONFIG_SND_SOC_TFA98XX
+							if (!strcmp(product_name, "nxp")) {
+								pr_info("%s: use nxp stereo dailink replace\n", __func__);
+								memcpy(temp_link, &tfa98xx_stereo_be_dai_links[0],
+										sizeof(tfa98xx_stereo_be_dai_links[0]));
+							}
+							#endif
+						}
+					}
+				}
+#endif /* VENDOR_EDIT */
 				memcpy(msm_lahaina_dai_links + total_links,
 					msm_mi2s_be_dai_links,
 					sizeof(msm_mi2s_be_dai_links));
@@ -7650,15 +7629,15 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 					ARRAY_SIZE(msm_mi2s_be_dai_links);
 			}
 		}
-#ifndef CONFIG_AUXPCM_DISABLE
+
 		rc = of_property_read_u32(dev->of_node,
 					  "qcom,auxpcm-audio-intf",
-					  &val);
+					  &auxpcm_audio_intf);
 		if (rc) {
 			dev_dbg(dev, "%s: No DT match Aux PCM interface\n",
 				__func__);
 		} else {
-			if (val) {
+			if (auxpcm_audio_intf) {
 				memcpy(msm_lahaina_dai_links + total_links,
 					msm_auxpcm_be_dai_links,
 					sizeof(msm_auxpcm_be_dai_links));
@@ -7666,7 +7645,6 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 					ARRAY_SIZE(msm_auxpcm_be_dai_links);
 			}
 		}
-#endif
 
 #if IS_ENABLED(CONFIG_AUDIO_QGKI)
 		rc = of_property_read_u32(dev->of_node,
@@ -7801,7 +7779,6 @@ static int msm_int_wsa_init(struct snd_soc_pcm_runtime *rtd)
 static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_component *component = NULL;
-	struct snd_soc_component *bolero_component = NULL;
 	struct snd_soc_dapm_context *dapm = NULL;
 	int ret = 0;
 	int codec_variant = -1;
@@ -7818,8 +7795,6 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 		pr_err("%s: could not find component for bolero_codec\n",
 			__func__);
 		return ret;
-	} else {
-		bolero_component = component;
 	}
 
 	dapm = snd_soc_component_get_dapm(component);
@@ -7866,6 +7841,13 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 
 	card = rtd->card->snd_card;
 
+	if (strnstr(rtd->card->name, "shima", strlen(rtd->card->name)) != NULL)
+		bolero_set_port_map(component, ARRAY_SIZE(sm_port_map_shima),
+				sm_port_map_shima);
+	else
+		bolero_set_port_map(component, ARRAY_SIZE(sm_port_map),
+				sm_port_map);
+
 	if (!pdata->codec_root) {
 		entry = msm_snd_info_create_subdir(card->module, "codecs",
 						 card->proc_root);
@@ -7885,11 +7867,8 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 	}
 	component = snd_soc_rtdcom_lookup(rtd, WCD938X_DRV_NAME);
 	if (!component) {
-		component = snd_soc_rtdcom_lookup(rtd, WCD937X_DRV_NAME);
-		if (!component) {
-			pr_err("%s component is NULL\n", __func__);
-			return -EINVAL;
-		}
+		pr_err("%s component is NULL\n", __func__);
+		return -EINVAL;
 	}
 	dapm = snd_soc_component_get_dapm(component);
 	card = component->card->snd_card;
@@ -7904,51 +7883,18 @@ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "AMIC4");
 	snd_soc_dapm_sync(dapm);
 
-	if (!strncmp(component->driver->name, WCD937X_DRV_NAME,
-	    strlen(WCD937X_DRV_NAME))) {
-		wcd937x_info_create_codec_entry(pdata->codec_root, component);
-		codec_variant = wcd937x_get_codec_variant(component);
-		dev_dbg(component->dev, "%s: variant %d\n",
-			 __func__, codec_variant);
-		if (codec_variant == WCD9370_VARIANT)
-			ret = snd_soc_add_component_controls(component,
-				msm_int_wcd9370_snd_controls,
-				ARRAY_SIZE(msm_int_wcd9370_snd_controls));
-		else if (codec_variant == WCD9375_VARIANT)
-			ret = snd_soc_add_component_controls(component,
-				msm_int_wcd9375_snd_controls,
-				ARRAY_SIZE(msm_int_wcd9375_snd_controls));
-		bolero_set_port_map(bolero_component,
-			ARRAY_SIZE(sm_port_map_wcd937x), sm_port_map_wcd937x);
-	} else if (!strncmp(component->driver->name, WCD938X_DRV_NAME,
-		   strlen(WCD938X_DRV_NAME))) {
-		wcd938x_info_create_codec_entry(pdata->codec_root, component);
+	wcd938x_info_create_codec_entry(pdata->codec_root, component);
 
-		codec_variant = wcd938x_get_codec_variant(component);
-		dev_dbg(component->dev, "%s: variant %d\n",
-			 __func__, codec_variant);
-		if (codec_variant == WCD9380)
-			ret = snd_soc_add_component_controls(component,
-				msm_int_wcd9380_snd_controls,
-				ARRAY_SIZE(msm_int_wcd9380_snd_controls));
-		else if (codec_variant == WCD9385)
-			ret = snd_soc_add_component_controls(component,
-				msm_int_wcd9385_snd_controls,
-				ARRAY_SIZE(msm_int_wcd9385_snd_controls));
-
-		if ((strnstr(rtd->card->name, "shima", strlen(rtd->card->name))
-		    != NULL) || (strnstr(rtd->card->name, "yupik",
-		    strlen(rtd->card->name)) != NULL))
-			bolero_set_port_map(bolero_component,
-				ARRAY_SIZE(sm_port_map_shima),
-				sm_port_map_shima);
-		else
-			bolero_set_port_map(bolero_component,
-				ARRAY_SIZE(sm_port_map), sm_port_map);
-	} else {
-		bolero_set_port_map(bolero_component, ARRAY_SIZE(sm_port_map),
-				 sm_port_map);
-	}
+	codec_variant = wcd938x_get_codec_variant(component);
+	dev_dbg(component->dev, "%s: variant %d\n", __func__, codec_variant);
+	if (codec_variant == WCD9380)
+		ret = snd_soc_add_component_controls(component,
+					msm_int_wcd9380_snd_controls,
+					ARRAY_SIZE(msm_int_wcd9380_snd_controls));
+	else if (codec_variant == WCD9385)
+		ret = snd_soc_add_component_controls(component,
+					msm_int_wcd9385_snd_controls,
+					ARRAY_SIZE(msm_int_wcd9385_snd_controls));
 
 	if (ret < 0) {
 		dev_err(component->dev, "%s: add codec specific snd controls failed: %d\n",
@@ -8405,6 +8351,11 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 
 	/* Add QoS request for audio tasks */
 	msm_audio_add_qos_request();
+
+	#ifdef OPLUS_BUG_DEBUG
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.MACHINE, 2020/08/20, Add for log*/
+	pr_warning("%s, %d, Successfully!\n", __func__, __LINE__);
+	#endif /* OPLUS_BUG_DEBUG */
 
 	return 0;
 err:

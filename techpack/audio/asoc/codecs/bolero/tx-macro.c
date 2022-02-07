@@ -43,18 +43,33 @@
 #define TX_MACRO_ADC_MUX_CFG_OFFSET 0x8
 #define TX_MACRO_ADC_MODE_CFG0_SHIFT 1
 
+#ifndef OPLUS_BUG_STABILITY
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC.1447862, 2018/06/26,
+ *Modify for pop noise when start dmic
+ */
 #define TX_MACRO_DMIC_UNMUTE_DELAY_MS	40
+#else /* OPLUS_BUG_STABILITY */
+#define TX_MACRO_DMIC_UNMUTE_DELAY_MS	70
+#endif /* OPLUS_BUG_STABILITY */
 #define TX_MACRO_AMIC_UNMUTE_DELAY_MS	100
 #define TX_MACRO_DMIC_HPF_DELAY_MS	300
 #define TX_MACRO_AMIC_HPF_DELAY_MS	300
 
-static int tx_amic_unmute_delay = TX_MACRO_AMIC_UNMUTE_DELAY_MS;
-module_param(tx_amic_unmute_delay, int, 0664);
-MODULE_PARM_DESC(tx_amic_unmute_delay, "delay to unmute the tx amic path");
+#ifndef OPLUS_BUG_STABILITY
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/12/17, Modify for amic umute*/
+static int tx_unmute_delay = TX_MACRO_DMIC_UNMUTE_DELAY_MS;
+#else /* OPLUS_BUG_STABILITY */
+static int tx_unmute_delay = TX_MACRO_AMIC_UNMUTE_DELAY_MS;
+#endif /* OPLUS_BUG_STABILITY */
+module_param(tx_unmute_delay, int, 0664);
+MODULE_PARM_DESC(tx_unmute_delay, "delay to unmute the tx path");
 
+#ifdef OPLUS_BUG_STABILITY
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/12/17, Add for dmic umute*/
 static int tx_dmic_unmute_delay = TX_MACRO_DMIC_UNMUTE_DELAY_MS;
 module_param(tx_dmic_unmute_delay, int, 0664);
-MODULE_PARM_DESC(tx_dmic_unmute_delay, "delay to unmute the tx dmic path");
+MODULE_PARM_DESC(tx_dmic_unmute_delay, "delay to unmute the dmic tx path");
+#endif /* OPLUS_BUG_STABILITY */
 
 static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 
@@ -353,6 +368,12 @@ static int tx_macro_swr_pwr_event(struct snd_soc_dapm_widget *w,
 	dev_dbg(tx_dev, "%s: event = %d, lpi_enable = %d\n",
 		__func__, event, tx_priv->lpi_enable);
 
+	#ifndef OPLUS_ARCH_EXTENDS
+	/*zhangrun@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/11/30, Modify for CR2810040, case04955351*/
+	if (!tx_priv->lpi_enable)
+		return ret;
+	#endif /* OPLUS_ARCH_EXTENDS */
+
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		if (tx_priv->lpi_enable) {
@@ -496,9 +517,15 @@ static bool is_amic_enabled(struct snd_soc_component *component, int decimator)
 	adc_mux_reg = BOLERO_CDC_TX_INP_MUX_ADC_MUX0_CFG1 +
 			TX_MACRO_ADC_MUX_CFG_OFFSET * decimator;
 	if (snd_soc_component_read32(component, adc_mux_reg) & SWR_MIC) {
+		#ifndef OPLUS_ARCH_EXTENDS
+		/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/11/19, Modify for amic judge wrong, case04926606*/
+		if (tx_priv->version == BOLERO_VERSION_2_1)
+			return true;
+		#else /* OPLUS_ARCH_EXTENDS */
 		if (tx_priv->version == BOLERO_VERSION_2_1 ||
 			tx_priv->version == BOLERO_VERSION_2_0)
 			return true;
+		#endif /* OPLUS_ARCH_EXTENDS */
 		adc_reg = BOLERO_CDC_TX_INP_MUX_ADC_MUX0_CFG0 +
 			TX_MACRO_ADC_MUX_CFG_OFFSET * decimator;
 		adc_n = snd_soc_component_read32(component, adc_reg) &
@@ -1100,19 +1127,36 @@ static int tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 						TX_HPF_CUT_OFF_FREQ_MASK,
 						CF_MIN_3DB_150HZ << 5);
 
+		#ifndef OPLUS_BUG_STABILITY
+		/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/12/17, Modify for amic&dmic umute*/
 		if (is_amic_enabled(component, decimator)) {
 			hpf_delay = TX_MACRO_AMIC_HPF_DELAY_MS;
 			unmute_delay = TX_MACRO_AMIC_UNMUTE_DELAY_MS;
-			if (unmute_delay < tx_amic_unmute_delay)
-				unmute_delay = tx_amic_unmute_delay;
+		}
+		if (tx_unmute_delay < unmute_delay)
+			tx_unmute_delay = unmute_delay;
+		#else /* OPLUS_BUG_STABILITY */
+		if (is_amic_enabled(component, decimator)) {
+			hpf_delay = TX_MACRO_AMIC_HPF_DELAY_MS;
+			unmute_delay = TX_MACRO_AMIC_UNMUTE_DELAY_MS;
+			if (unmute_delay < tx_unmute_delay)
+				unmute_delay = tx_unmute_delay;
 		} else {
+			hpf_delay = TX_MACRO_DMIC_HPF_DELAY_MS;
+			unmute_delay = TX_MACRO_DMIC_UNMUTE_DELAY_MS;
 			if (unmute_delay < tx_dmic_unmute_delay)
 				unmute_delay = tx_dmic_unmute_delay;
 		}
+		#endif /* OPLUS_BUG_STABILITY */
 		/* schedule work queue to Remove Mute */
 		queue_delayed_work(system_freezable_wq,
 				   &tx_priv->tx_mute_dwork[decimator].dwork,
+				   #ifndef OPLUS_BUG_STABILITY
+				   /*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2020/12/17, Modify for amic&dmic umute*/
+				   msecs_to_jiffies(tx_unmute_delay));
+				   #else /* OPLUS_BUG_STABILITY */
 				   msecs_to_jiffies(unmute_delay));
+				   #endif /* OPLUS_BUG_STABILITY */
 		if (tx_priv->tx_hpf_work[decimator].hpf_cut_off_freq !=
 							CF_MIN_3DB_150HZ) {
 			queue_delayed_work(system_freezable_wq,
@@ -3529,13 +3573,13 @@ static int tx_macro_probe(struct platform_device *pdev)
 			"%s: register macro failed\n", __func__);
 		goto err_reg_macro;
 	}
+	if (is_used_tx_swr_gpio)
+		schedule_work(&tx_priv->tx_macro_add_child_devices_work);
 	pm_runtime_set_autosuspend_delay(&pdev->dev, AUTO_SUSPEND_DELAY);
 	pm_runtime_use_autosuspend(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_suspend_ignore_children(&pdev->dev, true);
 	pm_runtime_enable(&pdev->dev);
-	if (is_used_tx_swr_gpio)
-		schedule_work(&tx_priv->tx_macro_add_child_devices_work);
 
 	return 0;
 err_reg_macro:

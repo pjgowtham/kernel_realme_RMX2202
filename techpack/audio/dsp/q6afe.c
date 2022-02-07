@@ -23,12 +23,24 @@
 #include "adsp_err.h"
 #include "q6afecal-hwdep.h"
 
+#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+#define AFE_MODULE_ID_TFADSP_RX		(0x1000B911)
+#define AFE_MODULE_ID_TFADSP_TX		(0x1000B912)
+#define AFE_PARAM_ID_TFADSP_TX_SET_ENABLE		(0x1000B920)
+#define AFE_PARAM_ID_TFADSP_RX_CFG 				(0x1000B921)
+#define AFE_PARAM_ID_TFADSP_RX_GET_RESULT		(0x1000B922)
+#define AFE_PARAM_ID_TFADSP_RX_SET_BYPASS		(0x1000B923)
+#define AFE_PARAM_ID_TFADSP_RX_SET_HAPTIC_GAIN	(0x1000B98F)
+
+#define AFE_PORT_ID_TFADSP_RX     AFE_PORT_ID_TERTIARY_MI2S_RX
+#define AFE_PORT_ID_TFADSP_TX     AFE_PORT_ID_TERTIARY_MI2S_TX
+#endif /*OPLUS_FEATURE_TFA98XX_VI_FEEDBACK*/
+
 #define WAKELOCK_TIMEOUT	5000
 #define AFE_CLK_TOKEN	1024
-#define AFE_NOWAIT_TOKEN	2048
 
 #define SP_V4_NUM_MAX_SPKRS SP_V2_NUM_MAX_SPKRS
-#define MAX_LSM_SESSIONS 8
 
 struct afe_avcs_payload_port_mapping {
 	u16 port_id;
@@ -263,7 +275,12 @@ struct afe_ctl {
 	uint32_t num_spkrs;
 	uint32_t cps_ch_mask;
 	struct afe_cps_hw_intf_cfg *cps_config;
-	int lsm_afe_ports[MAX_LSM_SESSIONS];
+
+#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+	struct rtac_cal_block_data tfa_cal;
+	atomic_t tfa_state;
+#endif /* OPLUS_FEATURE_TFA98XX_VI_FEEDBACK */
 };
 
 struct afe_clkinfo_per_port {
@@ -289,7 +306,7 @@ static struct afe_clkinfo_per_port clkinfo_per_port[] = {
 		MCLK_SRC_INT, Q6AFE_EXT_MCLK_FREQ_DEFAULT},
 	{ AFE_PORT_ID_QUINARY_MI2S_RX, Q6AFE_LPASS_CLK_ID_QUI_MI2S_IBIT,
 		MCLK_SRC_INT, Q6AFE_EXT_MCLK_FREQ_DEFAULT},
-	{ AFE_PORT_ID_SENARY_MI2S_RX, Q6AFE_LPASS_CLK_ID_SEN_MI2S_IBIT,
+	{ AFE_PORT_ID_SENARY_MI2S_TX, Q6AFE_LPASS_CLK_ID_SEN_MI2S_IBIT,
 		MCLK_SRC_INT, Q6AFE_EXT_MCLK_FREQ_DEFAULT},
 	{ AFE_PORT_ID_PRIMARY_PCM_RX, Q6AFE_LPASS_CLK_ID_PRI_PCM_IBIT,
 		MCLK_SRC_INT, Q6AFE_EXT_MCLK_FREQ_DEFAULT},
@@ -341,17 +358,14 @@ static struct afe_ctl this_afe;
 #define TIMEOUT_MS 1000
 #define Q6AFE_MAX_VOLUME 0x3FFF
 
-static int pcm_afe_instance[3];
-static int proxy_afe_instance[3];
-bool afe_close_done[3] = {true, true, true};
+static int pcm_afe_instance[2];
+static int proxy_afe_instance[2];
+bool afe_close_done[2] = {true, true};
 
 static bool proxy_afe_started = false;
 
 #define SIZEOF_CFG_CMD(y) \
 		(sizeof(struct apr_hdr) + sizeof(u16) + (sizeof(struct y)))
-
-static bool is_afe_proxy_port(int port_id);
-static bool q6afe_is_afe_lsm_port(int port_id);
 
 static void q6afe_unload_avcs_modules(u16 port_id, int index)
 {
@@ -940,6 +954,32 @@ static bool afe_token_is_valid(uint32_t token)
 	return true;
 }
 
+#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+static bool tfa_make_afe_callback(uint32_t token, uint32_t *payload,
+				    uint32_t payload_size)
+{
+	pr_debug("%s: this_afe.tfa_state = %d, payload_size = %d\n", __func__,
+			atomic_read(&this_afe.tfa_state), payload_size);
+
+	if (atomic_read(&this_afe.tfa_state) == 1 &&
+			payload_size == sizeof(uint32_t)) {
+		atomic_set(&this_afe.status, payload[0]);
+		if (payload[0])
+			atomic_set(&this_afe.state, -1);
+		else
+			atomic_set(&this_afe.state, 0);
+
+		atomic_set(&this_afe.tfa_state, 0);
+		wake_up(&this_afe.wait[token]);
+
+		return true;
+	}
+
+	return false;
+}
+#endif /*OPLUS_FEATURE_TFA98XX_VI_FEEDBACK*/
+
 static int32_t afe_callback(struct apr_client_data *data, void *priv)
 {
 	uint16_t i = 0;
@@ -965,8 +1005,6 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 		if (this_afe.apr) {
 			apr_reset(this_afe.apr);
 			atomic_set(&this_afe.state, 0);
-			atomic_set(&this_afe.clk_state, 0);
-			atomic_set(&this_afe.clk_status, ADSP_ENOTREADY);
 			this_afe.apr = NULL;
 			rtac_set_afe_handle(this_afe.apr);
 		}
@@ -1014,6 +1052,18 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 		if (rtac_make_afe_callback(data->payload,
 					   data->payload_size))
 			return 0;
+
+		#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+		/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20,
+		 *Add for tfa98xx vi feedback. because tfa usecase payload_size=4
+		 *[sizeof(uint32_t)], not meet:(data->payload_size >= param_id_pos * sizeof(uint32_t)),
+		 *so move tfa code to front.
+		 */
+		if (tfa_make_afe_callback(data->token, data->payload, data->payload_size)) {
+			pr_debug("%s: tfa afe callback done, return", __func__);
+			return 0;
+		}
+		#endif /* OPLUS_FEATURE_TFA98XX_VI_FEEDBACK */
 
 		if (data->opcode == AFE_PORT_CMDRSP_GET_PARAM_V3)
 			param_id_pos = 4;
@@ -1100,7 +1150,7 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 				if(data->token == AFE_CLK_TOKEN) {
 					atomic_set(&this_afe.clk_state, 0);
 					wake_up(&this_afe.clk_wait);
-				} else if(data->token != AFE_NOWAIT_TOKEN) {
+				} else {
 					atomic_set(&this_afe.state, 0);
 					if (afe_token_is_valid(data->token))
 						wake_up(&this_afe.wait[data->token]);
@@ -2392,6 +2442,18 @@ static int afe_spk_prot_prepare(int src_port, int dst_port, int param_id,
 	case AFE_PARAM_ID_SP_V2_EX_VI_FTM_CFG:
 		param_info.module_id = AFE_MODULE_SPEAKER_PROTECTION_V2_EX_VI;
 		break;
+	#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+	case AFE_PARAM_ID_TFADSP_RX_CFG:
+	case AFE_PARAM_ID_TFADSP_RX_SET_BYPASS:
+	case AFE_PARAM_ID_TFADSP_RX_SET_HAPTIC_GAIN:
+		param_info.module_id = AFE_MODULE_ID_TFADSP_RX;
+		break;
+
+	case AFE_PARAM_ID_TFADSP_TX_SET_ENABLE:
+		param_info.module_id = AFE_MODULE_ID_TFADSP_TX;
+		break;
+	#endif/* OPLUS_FEATURE_TFA98XX_VI_FEEDBACK */
 	case AFE_PARAM_ID_SP_V4_VI_CHANNEL_MAP_CFG:
 	case AFE_PARAM_ID_SP_V4_VI_OP_MODE_CFG:
 	case AFE_PARAM_ID_SP_V4_VI_R0T0_CFG:
@@ -3214,7 +3276,7 @@ static int afe_send_port_topology_id(u16 port_id)
 	}
 
 	ret = afe_get_cal_topology_id(port_id, &topology_id, AFE_TOPOLOGY_CAL);
-	if (ret < 0 && q6afe_is_afe_lsm_port(port_id)) {
+	if (ret < 0) {
 		pr_debug("%s: Check for LSM topology\n", __func__);
 		ret = afe_get_cal_topology_id(port_id, &topology_id,
 					      AFE_LSM_TOPOLOGY_CAL);
@@ -3667,7 +3729,7 @@ void afe_send_cal(u16 port_id)
 	if (afe_get_port_type(port_id) == MSM_AFE_PORT_TYPE_TX) {
 		afe_send_cal_spkr_prot_tx(port_id);
 		ret = send_afe_cal_type(AFE_COMMON_TX_CAL, port_id);
-		if (ret < 0 && q6afe_is_afe_lsm_port(port_id))
+		if (ret < 0)
 			send_afe_cal_type(AFE_LSM_TX_CAL, port_id);
 	} else if (afe_get_port_type(port_id) == MSM_AFE_PORT_TYPE_RX) {
 		send_afe_cal_type(AFE_COMMON_RX_CAL, port_id);
@@ -5744,30 +5806,28 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 		proxy_afe_started = true;
 	}
 	if ((port_id == RT_PROXY_DAI_001_RX) ||
-		(port_id == RT_PROXY_DAI_002_TX) ||
-		(port_id == RT_PROXY_DAI_003_RX)) {
+		(port_id == RT_PROXY_DAI_002_TX)) {
 		pr_debug("%s: before incrementing pcm_afe_instance %d port_id 0x%x\n",
 			__func__,
-			pcm_afe_instance[port_id & 0x3], port_id);
+			pcm_afe_instance[port_id & 0x1], port_id);
 		port_id = VIRTUAL_ID_TO_PORTID(port_id);
-		pcm_afe_instance[port_id & 0x3]++;
+		pcm_afe_instance[port_id & 0x1]++;
 		return 0;
 	}
 	if ((port_id == RT_PROXY_DAI_002_RX) ||
-			(port_id == RT_PROXY_DAI_001_TX) ||
-			(port_id == RT_PROXY_DAI_003_TX)) {
+			(port_id == RT_PROXY_DAI_001_TX)) {
 		pr_debug("%s: before incrementing proxy_afe_instance %d port_id 0x%x\n",
 			__func__,
-			proxy_afe_instance[port_id & 0x3], port_id);
+			proxy_afe_instance[port_id & 0x1], port_id);
 
-		if (!afe_close_done[port_id & 0x3]) {
+		if (!afe_close_done[port_id & 0x1]) {
 			/*close pcm dai corresponding to the proxy dai*/
 			afe_close(port_id - 0x10);
-			pcm_afe_instance[port_id & 0x3]++;
+			pcm_afe_instance[port_id & 0x1]++;
 			pr_debug("%s: reconfigure afe port again\n", __func__);
 		}
-		proxy_afe_instance[port_id & 0x3]++;
-		afe_close_done[port_id & 0x3] = false;
+		proxy_afe_instance[port_id & 0x1]++;
+		afe_close_done[port_id & 0x1] = false;
 		port_id = VIRTUAL_ID_TO_PORTID(port_id);
 	}
 
@@ -6663,14 +6723,12 @@ int afe_open(u16 port_id,
 	}
 
 	if ((port_id == RT_PROXY_DAI_001_RX) ||
-		(port_id == RT_PROXY_DAI_002_TX) ||
-		(port_id == RT_PROXY_DAI_003_RX)) {
+		(port_id == RT_PROXY_DAI_002_TX)) {
 		pr_err("%s: wrong port 0x%x\n", __func__, port_id);
 		return -EINVAL;
 	}
 	if ((port_id == RT_PROXY_DAI_002_RX) ||
-		(port_id == RT_PROXY_DAI_001_TX) ||
-		(port_id == RT_PROXY_DAI_003_TX))
+		(port_id == RT_PROXY_DAI_001_TX))
 		port_id = VIRTUAL_ID_TO_PORTID(port_id);
 
 	ret = afe_q6_interface_prepare();
@@ -6967,7 +7025,7 @@ int afe_pseudo_port_start_nowait(u16 port_id)
 	start.hdr.pkt_size = sizeof(start);
 	start.hdr.src_port = 0;
 	start.hdr.dest_port = 0;
-	start.hdr.token = AFE_NOWAIT_TOKEN;
+	start.hdr.token = 0;
 	start.hdr.opcode = AFE_PSEUDOPORT_CMD_START;
 	start.port_id = port_id;
 	start.timing = 1;
@@ -7056,10 +7114,11 @@ int afe_pseudo_port_stop_nowait(u16 port_id)
 	stop.hdr.pkt_size = sizeof(stop);
 	stop.hdr.src_port = 0;
 	stop.hdr.dest_port = 0;
-	stop.hdr.token = AFE_NOWAIT_TOKEN;
+	stop.hdr.token = 0;
 	stop.hdr.opcode = AFE_PSEUDOPORT_CMD_STOP;
 	stop.port_id = port_id;
 	stop.reserved = 0;
+	stop.hdr.token = index;
 
 	ret = afe_apr_send_pkt(&stop, NULL);
 	if (ret)
@@ -7572,7 +7631,7 @@ int afe_cmd_memory_map_nowait(int port_id, phys_addr_t dma_addr_p,
 	mregion->hdr.pkt_size = sizeof(mregion);
 	mregion->hdr.src_port = 0;
 	mregion->hdr.dest_port = 0;
-	mregion->hdr.token = AFE_NOWAIT_TOKEN;
+	mregion->hdr.token = 0;
 	mregion->hdr.opcode = AFE_SERVICE_CMD_SHARED_MEM_MAP_REGIONS;
 	mregion->mem_pool_id = ADSP_MEMORY_MAP_SHMEM8_4K_POOL;
 	mregion->num_regions = 1;
@@ -7741,7 +7800,7 @@ int afe_cmd_memory_unmap_nowait(u32 mem_map_handle)
 	mregion.hdr.pkt_size = sizeof(mregion);
 	mregion.hdr.src_port = 0;
 	mregion.hdr.dest_port = 0;
-	mregion.hdr.token = AFE_NOWAIT_TOKEN;
+	mregion.hdr.token = 0;
 	mregion.hdr.opcode = AFE_SERVICE_CMD_SHARED_MEM_UNMAP_REGIONS;
 	mregion.mem_map_handle = mem_map_handle;
 
@@ -8839,29 +8898,6 @@ int afe_validate_port(u16 port_id)
 	return ret;
 }
 
-static bool is_afe_proxy_port(int port_id)
-{
-	bool ret = false;
-	switch(port_id) {
-	case RT_PROXY_DAI_001_RX:
-	case RT_PROXY_DAI_001_TX:
-	case RT_PROXY_DAI_002_RX:
-	case RT_PROXY_DAI_002_TX:
-	case RT_PROXY_DAI_003_RX:
-	case RT_PROXY_DAI_003_TX:
-	{
-		ret = true;
-		break;
-	}
-	default:
-		pr_debug("%s: afe port %d is not a proxy port\n",
-			__func__, port_id);
-		ret = false;
-	}
-
-	return ret;
-}
-
 int afe_convert_virtual_to_portid(u16 port_id)
 {
 	int ret;
@@ -8875,7 +8911,6 @@ int afe_convert_virtual_to_portid(u16 port_id)
 		    port_id == RT_PROXY_DAI_001_TX ||
 		    port_id == RT_PROXY_DAI_002_RX ||
 		    port_id == RT_PROXY_DAI_002_TX ||
-		    port_id == RT_PROXY_DAI_003_RX ||
 		    port_id == RT_PROXY_DAI_003_TX) {
 			ret = VIRTUAL_ID_TO_PORTID(port_id);
 		} else {
@@ -8906,7 +8941,7 @@ int afe_port_stop_nowait(int port_id)
 	stop.hdr.pkt_size = sizeof(stop);
 	stop.hdr.src_port = 0;
 	stop.hdr.dest_port = 0;
-	stop.hdr.token = AFE_NOWAIT_TOKEN;
+	stop.hdr.token = 0;
 	stop.hdr.opcode = AFE_PORT_CMD_DEVICE_STOP;
 	stop.port_id = port_id;
 	stop.reserved = 0;
@@ -8938,49 +8973,43 @@ int afe_close(int port_id)
 
 	if (this_afe.apr == NULL) {
 		pr_err("%s: AFE is already closed\n", __func__);
-
-		if (is_afe_proxy_port(port_id)) {
-			if ((port_id == RT_PROXY_DAI_001_RX) ||
-			    (port_id == RT_PROXY_DAI_002_TX) ||
-			    (port_id == RT_PROXY_DAI_003_RX))
-				pcm_afe_instance[port_id & 0x3] = 0;
-			if ((port_id == RT_PROXY_DAI_002_RX) ||
-			    (port_id == RT_PROXY_DAI_001_TX) ||
-		 	   (port_id == RT_PROXY_DAI_003_TX))
-				proxy_afe_instance[port_id & 0x3] = 0;
-			afe_close_done[port_id & 0x3] = true;
-		}
-		return -EINVAL;
+		if ((port_id == RT_PROXY_DAI_001_RX) ||
+		    (port_id == RT_PROXY_DAI_002_TX))
+			pcm_afe_instance[port_id & 0x1] = 0;
+		if ((port_id == RT_PROXY_DAI_002_RX) ||
+		    (port_id == RT_PROXY_DAI_001_TX))
+			proxy_afe_instance[port_id & 0x1] = 0;
+		afe_close_done[port_id & 0x1] = true;
+		ret = -EINVAL;
+		goto fail_cmd;
 	}
 	pr_debug("%s: port_id = 0x%x\n", __func__, port_id);
 	if ((port_id == RT_PROXY_DAI_001_RX) ||
-			(port_id == RT_PROXY_DAI_002_TX) ||
-			(port_id == RT_PROXY_DAI_003_RX)) {
+			(port_id == RT_PROXY_DAI_002_TX)) {
 		pr_debug("%s: before decrementing pcm_afe_instance %d\n",
-			__func__, pcm_afe_instance[port_id & 0x3]);
+			__func__, pcm_afe_instance[port_id & 0x1]);
 		port_id = VIRTUAL_ID_TO_PORTID(port_id);
-		pcm_afe_instance[port_id & 0x3]--;
-		if ((!(pcm_afe_instance[port_id & 0x3] == 0 &&
-			proxy_afe_instance[port_id & 0x3] == 0)) ||
-			afe_close_done[port_id & 0x3] == true)
+		pcm_afe_instance[port_id & 0x1]--;
+		if ((!(pcm_afe_instance[port_id & 0x1] == 0 &&
+			proxy_afe_instance[port_id & 0x1] == 0)) ||
+			afe_close_done[port_id & 0x1] == true)
 			return 0;
 
-		afe_close_done[port_id & 0x3] = true;
+		afe_close_done[port_id & 0x1] = true;
 	}
 
 	if ((port_id == RT_PROXY_DAI_002_RX) ||
-		(port_id == RT_PROXY_DAI_001_TX) ||
-		(port_id == RT_PROXY_DAI_003_TX)) {
+		(port_id == RT_PROXY_DAI_001_TX)) {
 		pr_debug("%s: before decrementing proxy_afe_instance %d\n",
-			__func__, proxy_afe_instance[port_id & 0x3]);
+			__func__, proxy_afe_instance[port_id & 0x1]);
 		port_id = VIRTUAL_ID_TO_PORTID(port_id);
-		proxy_afe_instance[port_id & 0x3]--;
-		if ((!(pcm_afe_instance[port_id & 0x3] == 0 &&
-			proxy_afe_instance[port_id & 0x3] == 0)) ||
-			afe_close_done[port_id & 0x3] == true)
+		proxy_afe_instance[port_id & 0x1]--;
+		if ((!(pcm_afe_instance[port_id & 0x1] == 0 &&
+			proxy_afe_instance[port_id & 0x1] == 0)) ||
+			afe_close_done[port_id & 0x1] == true)
 			return 0;
 
-		afe_close_done[port_id & 0x3] = true;
+		afe_close_done[port_id & 0x1] = true;
 	}
 
 	if (port_id == RT_PROXY_PORT_002_RX && proxy_afe_started)
@@ -11345,6 +11374,212 @@ static void afe_release_uevent_data(struct kobject *kobj)
 	kfree(data);
 }
 
+#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+int send_tfa_cal_apr(void *buf, int cmd_size, bool bRead)
+{
+	int32_t result = 0, port_id = AFE_PORT_ID_TFADSP_RX;
+	uint32_t port_index = 0, payload_size = 0;
+	size_t len;
+	struct rtac_cal_block_data *tfa_cal = &(this_afe.tfa_cal);
+	struct mem_mapping_hdr mem_hdr;
+	struct param_hdr_v3  param_hdr;
+
+	pr_debug("%s\n", __func__);
+
+	memset(&mem_hdr, 0x00, sizeof(mem_hdr));
+	memset(&param_hdr, 0x00, sizeof(param_hdr));
+
+	if (0 == tfa_cal->map_data.dma_buf ) {
+		/*Minimal chunk size is 4K*/
+		tfa_cal->map_data.map_size = SZ_4K;
+		result = msm_audio_ion_alloc(&(tfa_cal->map_data.dma_buf),
+								tfa_cal->map_data.map_size,
+								&(tfa_cal->cal_data.paddr),
+								&len,
+								&(tfa_cal->cal_data.kvaddr));
+		if (result < 0) {
+			pr_err("%s: allocate buffer failed! ret = %d\n",
+				__func__, result);
+			goto err;
+		}
+		pr_debug("%s: paddr 0x%pK, kvaddr 0x%pK, map_size 0x%x\n",
+				__func__,
+				&tfa_cal->cal_data.paddr,
+				tfa_cal->cal_data.kvaddr,
+				tfa_cal->map_data.map_size);
+	}
+
+	if (0 == tfa_cal->map_data.map_handle ) {
+		result = afe_map_rtac_block(tfa_cal);
+		if (result < 0) {
+			pr_err("%s: map buffer failed! ret = %d\n",
+				__func__, result);
+			goto err;
+		}
+	}
+
+	port_index = q6audio_get_port_index(port_id);
+	if (port_index >= AFE_MAX_PORTS) {
+		pr_err("%s: Invalid AFE port = 0x%x\n", __func__, port_id);
+		result = -EINVAL;
+		goto err;
+	}
+
+	if (cmd_size > (SZ_4K - sizeof(struct param_hdr_v3))) {
+		pr_err("%s: Invalid payload size = %d\n", __func__, cmd_size);
+		result = -EINVAL;
+		goto err;
+	}
+
+	/* Pack message header with data */
+	param_hdr.module_id = AFE_MODULE_ID_TFADSP_RX;
+	param_hdr.instance_id = INSTANCE_ID_0;
+	param_hdr.param_size = cmd_size;
+
+	if (!bRead) {
+		param_hdr.param_id = AFE_PARAM_ID_TFADSP_RX_CFG;
+
+		q6common_pack_pp_params(tfa_cal->cal_data.kvaddr,
+							&param_hdr,
+							buf,
+							&payload_size);
+		tfa_cal->cal_data.size = payload_size;
+	}
+	else {
+		param_hdr.param_id = AFE_PARAM_ID_TFADSP_RX_GET_RESULT;
+		tfa_cal->cal_data.size = cmd_size + sizeof(struct param_hdr_v3) ;
+	}
+
+	/*Send/Get package to/from ADSP*/
+	mem_hdr.data_payload_addr_lsw =
+		lower_32_bits(tfa_cal->cal_data.paddr);
+	mem_hdr.data_payload_addr_msw =
+		msm_audio_populate_upper_32_bits(tfa_cal->cal_data.paddr);
+	mem_hdr.mem_map_handle =
+		tfa_cal->map_data.map_handle;
+
+	pr_debug("%s: Sending tfa_cal port = 0x%x, cal size = %zd, cal addr = 0x%pK\n",
+		__func__, port_id, tfa_cal->cal_data.size, &tfa_cal->cal_data.paddr);
+
+	result = afe_q6_interface_prepare();
+	if (result != 0) {
+		pr_err("%s: Q6 interface prepare failed %d\n", __func__, result);
+		goto err;
+	}
+
+	if (!bRead) {
+		if (q6common_is_instance_id_supported())
+			result = q6afe_set_params_v3(port_id, port_index, &mem_hdr, NULL, payload_size);
+		else
+			result = q6afe_set_params_v2(port_id, port_index, &mem_hdr, NULL, payload_size);
+	} else {
+		int8_t *resp = (int8_t *)tfa_cal->cal_data.kvaddr;
+
+		atomic_set(&this_afe.tfa_state, 1);
+		if (q6common_is_instance_id_supported()){
+			result = q6afe_get_params_v3(port_id, port_index, &mem_hdr, &param_hdr);
+			resp += sizeof(struct param_hdr_v3);
+		}
+		else {
+			result = q6afe_get_params_v2(port_id, port_index, &mem_hdr, &param_hdr);
+			resp += sizeof(struct param_hdr_v1);
+		}
+
+		if (result) {
+			pr_err("%s: get response from port 0x%x failed %d\n",
+					__func__, port_id, result);
+			goto err;
+		}
+		else {
+			/*Copy response data to command buffer*/
+			memcpy(buf,  resp,  cmd_size);
+		}
+	}
+
+err:
+	return result;
+}
+EXPORT_SYMBOL(send_tfa_cal_apr);
+
+void send_tfa_cal_unmap_memory(void)
+{
+	int result = 0;
+
+	if (this_afe.tfa_cal.map_data.map_handle) {
+		result = afe_unmap_rtac_block(&this_afe.tfa_cal.map_data.map_handle);
+
+		/*Force to remap after unmap failed*/
+		if (result)
+			this_afe.tfa_cal.map_data.map_handle = 0;
+	}
+}
+EXPORT_SYMBOL(send_tfa_cal_unmap_memory);
+
+int send_tfa_cal_in_band(void *buf, int cmd_size)
+{
+	union afe_spkr_prot_config afe_spk_config;
+	int32_t port_id = AFE_PORT_ID_TFADSP_RX;
+
+	if (cmd_size > sizeof(afe_spk_config))
+		return -EINVAL;
+
+	memcpy(&afe_spk_config, buf, cmd_size);
+
+	if (afe_spk_prot_prepare(port_id, 0,
+			AFE_PARAM_ID_TFADSP_RX_CFG,
+			&afe_spk_config,sizeof(union afe_spkr_prot_config))) {
+			pr_err("%s: AFE_PARAM_ID_TFADSP_RX_CFG failed\n",
+				   __func__);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(send_tfa_cal_in_band);
+
+int send_tfa_cal_set_bypass(void *buf, int cmd_size)
+{
+	union afe_spkr_prot_config afe_spk_config;
+	int32_t port_id = AFE_PORT_ID_TFADSP_RX;
+
+	if (cmd_size > sizeof(afe_spk_config))
+		return -EINVAL;
+
+	memcpy(&afe_spk_config, buf, cmd_size);
+
+	if (afe_spk_prot_prepare(port_id, 0,
+			AFE_PARAM_ID_TFADSP_RX_SET_BYPASS,
+			&afe_spk_config, sizeof(union afe_spkr_prot_config))) {
+		pr_err("%s: AFE_PARAM_ID_TFADSP_RX_SET_BYPASS failed\n",
+				   __func__);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(send_tfa_cal_set_bypass);
+
+int send_tfa_cal_set_tx_enable(void *buf, int cmd_size)
+{
+	union afe_spkr_prot_config afe_spk_config;
+	int32_t port_id = AFE_PORT_ID_TFADSP_TX;
+
+	if (cmd_size > sizeof(afe_spk_config))
+		return -EINVAL;
+
+	memcpy(&afe_spk_config, buf, cmd_size);
+
+	if (afe_spk_prot_prepare(port_id, 0,
+			AFE_PARAM_ID_TFADSP_TX_SET_ENABLE,
+			&afe_spk_config, sizeof(union afe_spkr_prot_config))) {
+		pr_err("%s: AFE_PARAM_ID_TFADSP_TX_SET_ENABLE failed\n",
+				   __func__);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(send_tfa_cal_set_tx_enable);
+#endif /* OPLUS_FEATURE_TFA98XX_VI_FEEDBACK */
+
 int __init afe_init(void)
 {
 	int i = 0, ret;
@@ -11384,8 +11619,7 @@ int __init afe_init(void)
 	wl.ws = wakeup_source_register(NULL, "spkr-prot");
 	if (!wl.ws)
 		return -ENOMEM;
-	for (i = 0; i < MAX_LSM_SESSIONS; i++)
-		this_afe.lsm_afe_ports[i] = 0xffff;
+
 	ret = afe_init_cal_data();
 	if (ret)
 		pr_err("%s: could not init cal data! %d\n", __func__, ret);
@@ -11417,6 +11651,14 @@ int __init afe_init(void)
 
 void afe_exit(void)
 {
+	#ifdef OPLUS_FEATURE_TFA98XX_VI_FEEDBACK
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.SMARTPA, 2019/07/20, Add for tfa98xx vi feedback*/
+	if (this_afe.tfa_cal.map_data.map_handle) {
+		afe_unmap_rtac_block(&this_afe.tfa_cal.map_data.map_handle);
+		this_afe.tfa_cal.map_data.map_handle = 0;
+	}
+	#endif /* OPLUS_FEATURE_TFA98XX_VI_FEEDBACK */
+
 	if (this_afe.apr) {
 		apr_reset(this_afe.apr);
 		atomic_set(&this_afe.state, 0);
@@ -11622,30 +11864,3 @@ void afe_set_cps_config(int src_port,
 	this_afe.cps_config = cps_config;
 }
 EXPORT_SYMBOL(afe_set_cps_config);
-
-static bool q6afe_is_afe_lsm_port(int port_id)
-{
-	int i = 0;
-
-	for (i = 0; i < MAX_LSM_SESSIONS; i++) {
-		if (port_id == this_afe.lsm_afe_ports[i])
-			return true;
-	}
-	return false;
-}
-
-/**
- * afe_set_lsm_afe_port_id -
- *            Update LSM AFE port
- * idx: LSM port index
- * lsm_port: LSM port id
-*/
-void afe_set_lsm_afe_port_id(int idx, int lsm_port)
-{
-	if (idx < 0 || idx >= MAX_LSM_SESSIONS) {
-		pr_err("%s: %d Invalid lsm port index\n", __func__, idx);
-		return;
-	}
-	this_afe.lsm_afe_ports[idx] = lsm_port;
-}
-EXPORT_SYMBOL(afe_set_lsm_afe_port_id);

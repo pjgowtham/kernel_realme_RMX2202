@@ -19,6 +19,12 @@
 #include "dsi_ctrl.h"
 #include "dsi_phy.h"
 #include "dsi_panel.h"
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Stability,2018/11/21
+ * Add for save select panel and give different feature
+*/
+#include "oplus_dsi_support.h"
+#endif /*OPLUS_BUG_STABILITY*/
 
 #define MAX_DSI_CTRLS_PER_DISPLAY             2
 #define DSI_CLIENT_NAME_SIZE		20
@@ -192,10 +198,9 @@ struct dsi_display_ext_bridge {
  * @is_active:        status of the display
  * @trusted_vm_env:   Set to true, it the executing VM is Trusted VM.
  *                    Set to false, otherwise.
- * @hw_ownership:     Indicates if VM owns the hardware resources.
  * @tx_cmd_buf_ndx:   Index to the DSI debugfs TX CMD buffer.
  * @cmd_set:	      Debugfs TX cmd set.
- * @enabled:	      Boolean to indicate display enabled.
+ * @enabled:       Boolean to indicate display enabled.
  */
 struct dsi_display {
 	struct platform_device *pdev;
@@ -283,6 +288,11 @@ struct dsi_display {
 
 	u32 te_source;
 	u32 clk_gating_config;
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	u32 off;
+	u32 cnt;
+	u8 cmd_data_type;
+#endif
 	bool queue_cmd_waits;
 	struct workqueue_struct *dma_cmd_workq;
 
@@ -291,12 +301,23 @@ struct dsi_display {
 	bool is_active;
 
 	bool trusted_vm_env;
-	bool hw_ownership;
-
 	int tx_cmd_buf_ndx;
 	struct dsi_panel_cmd_set cmd_set;
 
 	bool enabled;
+
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	/* save qsync info, then restore qsync status after panel enable*/
+	bool need_qsync_restore;
+	/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/01, Add for qsync tearing issue */
+	/* force close qysnc window when qsync mode is on before panel enable */
+	bool force_qsync_mode_off;
+	uint32_t current_qsync_mode;
+	uint32_t current_qsync_dynamic_min_fps;
+	/* Qianxu@MULTIMEDIA.DISPLAY, 2020/10/21, vsync switch */
+	struct completion switch_te_gate;
+#endif
 };
 
 int dsi_display_dev_probe(struct platform_device *pdev);
@@ -759,6 +780,18 @@ enum dsi_pixel_format dsi_display_get_dst_format(
  * Return: Zero on Success
  */
 int dsi_display_cont_splash_config(void *display);
+
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Stability,2018/10/21
+ * Add for support aod,hbm,seed
+*/
+struct dsi_display *get_main_display(void);
+
+/* Add for implement panel register read */
+int dsi_host_alloc_cmd_tx_buffer(struct dsi_display *display);
+int dsi_display_cmd_engine_enable(struct dsi_display *display);
+int dsi_display_cmd_engine_disable(struct dsi_display *display);
+#endif
 
 /**
  * dsi_display_cont_splash_res_disable() - Disable resource votes added in probe

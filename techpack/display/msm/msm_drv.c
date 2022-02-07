@@ -49,6 +49,14 @@
 #include "msm_mmu.h"
 #include "sde_wb.h"
 #include "sde_dbg.h"
+#if defined(OPLUS_FEATURE_PXLW_IRIS5) || defined(OPLUS_FEATURE_PXLW_SOFT_IRIS)
+#include "dsi/iris/dsi_iris5_api.h"
+#endif
+
+#ifdef OPLUS_BUG_STABILITY
+/* CaiHuiyue@MULTIMEDIA, 2020/10/22, oplus adfr */
+#include "oplus_adfr.h"
+#endif
 
 /*
  * MSM driver version:
@@ -366,6 +374,7 @@ static int vblank_ctrl_queue_work(struct msm_drm_private *priv,
 					int crtc_id, bool enable)
 {
 	struct vblank_work *cur_work;
+	struct drm_crtc *crtc;
 	struct kthread_worker *worker;
 
 	if (!priv || crtc_id >= priv->num_crtcs)
@@ -374,6 +383,8 @@ static int vblank_ctrl_queue_work(struct msm_drm_private *priv,
 	cur_work = kzalloc(sizeof(*cur_work), GFP_ATOMIC);
 	if (!cur_work)
 		return -ENOMEM;
+
+	crtc = priv->crtcs[crtc_id];
 
 	kthread_init_work(&cur_work->work, vblank_ctrl_worker);
 	cur_work->crtc_id = crtc_id;
@@ -411,6 +422,13 @@ static int msm_drm_uninit(struct device *dev)
 			priv->event_thread[i].thread = NULL;
 		}
 	}
+
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	if (oplus_adfr_is_support()) {
+		oplus_adfr_thread_destroy(priv);
+	}
+#endif
 
 	drm_kms_helper_poll_fini(ddev);
 	if (kms && kms->funcs)
@@ -696,6 +714,20 @@ static int msm_drm_display_thread_create(struct sched_param param,
 		return ret;
 	}
 
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	/**
+	 * Use a seperate adfr thread for fake frame.
+	 * Because fake frame maybe causes crtc commit/event more heavy.
+	 * This can lead to commit miss TE/retire event delay
+	 */
+	if (oplus_adfr_is_support()) {
+		if (oplus_adfr_thread_create(&param, priv, ddev, dev)) {
+			return -EINVAL;
+		}
+	}
+#endif
+
 	return 0;
 
 }
@@ -894,7 +926,7 @@ static int msm_drm_component_init(struct device *dev)
 	drm_mode_config_reset(ddev);
 
 	if (kms && kms->funcs && kms->funcs->cont_splash_config) {
-		ret = kms->funcs->cont_splash_config(kms, NULL);
+		ret = kms->funcs->cont_splash_config(kms);
 		if (ret) {
 			dev_err(dev, "kms cont_splash config failed.\n");
 			goto fail;
@@ -1689,6 +1721,10 @@ static const struct drm_ioctl_desc msm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(MSM_RMFB2, msm_ioctl_rmfb2, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MSM_POWER_CTRL, msm_ioctl_power_ctrl,
 			DRM_RENDER_ALLOW),
+#if defined(OPLUS_FEATURE_PXLW_IRIS5) || defined(OPLUS_FEATURE_PXLW_SOFT_IRIS)
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_CONF, msm_ioctl_iris_operate_conf, DRM_UNLOCKED|DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_TOOL, msm_ioctl_iris_operate_tool, DRM_UNLOCKED|DRM_RENDER_ALLOW),
+#endif
 	DRM_IOCTL_DEF_DRV(MSM_DISPLAY_HINT, msm_ioctl_display_hint_ops,
 			DRM_UNLOCKED),
 };
@@ -2209,6 +2245,7 @@ static int __init msm_drm_register(void)
 static void __exit msm_drm_unregister(void)
 {
 	DBG("fini");
+
 	platform_driver_unregister(&msm_platform_driver);
 	sde_wb_unregister();
 	msm_hdmi_unregister();

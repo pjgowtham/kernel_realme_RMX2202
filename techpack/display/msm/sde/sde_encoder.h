@@ -47,7 +47,12 @@
 #define SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE	BIT(4)
 #define SDE_ENCODER_FRAME_EVENT_CWB_DONE		BIT(5)
 
+#ifdef OPLUS_BUG_STABILITY
+/* Liping-M@PSW.MM.Display.LCD.Stability,2021-01-19,Add for camera 16fps framemissed */
+#define IDLE_POWERCOLLAPSE_DURATION	(80 - 16/2)
+#else
 #define IDLE_POWERCOLLAPSE_DURATION	(66 - 16/2)
+#endif
 #define IDLE_POWERCOLLAPSE_IN_EARLY_WAKEUP (200 - 16/2)
 
 /**
@@ -188,6 +193,10 @@ struct sde_encoder_ops {
  * @pm_qos_cpu_req:		qos request for all cpu core frequency
  * @valid_cpu_mask:		actual voted cpu core mask
  * @mode_info:                  stores the current mode and should be used
+ * @delay_kickoff      boolean to delay the kickoff, used in case
+ *             of esd attack to ensure esd workqueue detects
+ *             the previous frame transfer completion before
+ *             next update is triggered.
  *				only in commit phase
  * @delay_kickoff		boolean to delay the kickoff, used in case
  *				of esd attack to ensure esd workqueue detects
@@ -245,6 +254,9 @@ struct sde_encoder_virt {
 	struct kthread_work esd_trigger_work;
 	struct input_handler *input_handler;
 	struct msm_display_topology topology;
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	struct kthread_work disable_autorefresh_work;
+#endif
 	bool vblank_enabled;
 	bool idle_pc_restore;
 	enum frame_trigger_mode_type frame_trigger_mode;
@@ -261,6 +273,15 @@ struct sde_encoder_virt {
 	struct cpumask valid_cpu_mask;
 	struct msm_mode_info mode_info;
 	bool delay_kickoff;
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	struct hrtimer fakeframe_timer;
+	struct kthread_work fakeframe_work;
+	/* CaiHuiyue@MULTIMEDIA, 2020/12/2, double TE */
+	uint32_t cur_mode_hdisplay;
+	bool need_te_source_switch;
+	uint32_t need_te_source;
+#endif
 };
 
 #define to_sde_encoder_virt(x) container_of(x, struct sde_encoder_virt, base)
@@ -486,11 +507,12 @@ int sde_encoder_display_failure_notification(struct drm_encoder *enc,
 bool sde_encoder_recovery_events_enabled(struct drm_encoder *encoder);
 
 /**
- * sde_encoder_enable_recovery_event - handler to enable the sw recovery
- * for this connector
+ * sde_encoder_recovery_events_handler - handler to enable/disable the
+ * sw recovery for this connector
  * @drm_enc:    Pointer to drm encoder structure
  */
-void sde_encoder_enable_recovery_event(struct drm_encoder *encoder);
+void sde_encoder_recovery_events_handler(struct drm_encoder *encoder,
+		bool val);
 /**
  * sde_encoder_in_clone_mode - checks if underlying phys encoder is in clone
  *	mode or independent display mode. ref@ WB in Concurrent writeback mode.
@@ -619,4 +641,34 @@ static inline bool sde_encoder_is_widebus_enabled(struct drm_encoder *drm_enc)
 	sde_enc = to_sde_encoder_virt(drm_enc);
 	return sde_enc->mode_info.wide_bus_en;
 }
+
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+/**
+ * sde_encoder_rc_lock - lock the sde encoder resource control.
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     void.
+ */
+void sde_encoder_rc_lock(struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_rc_unlock - unlock the sde encoder resource control.
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     void.
+ */
+void sde_encoder_rc_unlock(struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_disable_autorefresh - disable autorefresh
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     void.
+ */
+void sde_encoder_disable_autorefresh_handler(struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_is_disabled - encoder is disabled
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     bool.
+ */
+bool sde_encoder_is_disabled(struct drm_encoder *drm_enc);
+#endif
 #endif /* __SDE_ENCODER_H__ */

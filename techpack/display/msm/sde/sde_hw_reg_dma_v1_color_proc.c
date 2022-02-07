@@ -115,6 +115,12 @@
 
 #define REG_DMA_DSPP_GAMUT_OP_MASK 0xFFFFFFE0
 
+#ifdef OPLUS_BUG_STABILITY
+/* HuJie@PSW.MM.Display.LCD.Stability,2021/2/1 add for backlight smooths */
+extern u32 g_oplus_save_pcc;
+#endif
+
+
 enum ltm_vlut_ops_bitmask {
 	ltm_unsharp = BIT(0),
 	ltm_dither = BIT(1),
@@ -1364,6 +1370,13 @@ void reg_dmav1_setup_dspp_pcc_common(struct sde_hw_dspp *ctx, void *cfg)
 		data[i + 15] = coeffs->rb;
 		data[i + 18] = coeffs->gb;
 		data[i + 21] = coeffs->rgb;
+#ifdef OPLUS_BUG_STABILITY
+/* HuJie@PSW.MM.Display.LCD.Stability,2021/2/1 add for backlight smooths */
+		if(i == 0) {
+			g_oplus_save_pcc = coeffs->r;
+			pr_debug("backlight smooth for g_oplus_save_pcc = %d, %d, %d", coeffs->r,coeffs->g,coeffs->b);
+		}
+#endif
 	}
 
 	REG_DMA_SETUP_OPS(dma_write_cfg,
@@ -4013,6 +4026,7 @@ static void _dspp_igcv4_off(struct sde_hw_dspp *ctx, void *cfg)
 	_perform_sbdma_kickoff(ctx, hw_cfg, dma_ops, blk, IGC);
 }
 
+extern oplus_dither_enable;
 void reg_dmav2_setup_dspp_igcv4(struct sde_hw_dspp *ctx, void *cfg)
 {
 	struct drm_msm_igc_lut *lut_cfg;
@@ -4085,9 +4099,16 @@ void reg_dmav2_setup_dspp_igcv4(struct sde_hw_dspp *ctx, void *cfg)
 		data[j++] = (u16)(lut_cfg->c0[i] << 4);
 		data[j++] = (u16)(lut_cfg->c1[i] << 4);
 	}
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	// WA: set last IGC values
+	data[j++] = (u16)(lut_cfg->c2_last << 4);
+	data[j++] = (u16)(lut_cfg->c0_last << 4);
+	data[j++] = (u16)(lut_cfg->c1_last << 4);
+#else
 	data[j++] = (4095 << 4);
 	data[j++] = (4095 << 4);
 	data[j++] = (4095 << 4);
+#endif
 	REG_DMA_SETUP_OPS(dma_write_cfg, 0, (u32 *)data, len,
 			REG_BLK_LUT_WRITE, 0, 0, 0);
 	/* table select is only relevant to SSPP Gamut */
@@ -4103,9 +4124,15 @@ void reg_dmav2_setup_dspp_igcv4(struct sde_hw_dspp *ctx, void *cfg)
 	}
 
 	reg = BIT(8);
-	if (lut_cfg->flags & IGC_DITHER_ENABLE) {
+	if(oplus_dither_enable) {
+		lut_cfg->strength = 4;
 		reg |= BIT(4);
 		reg |= (lut_cfg->strength & IGC_DITHER_DATA_MASK);
+	} else {
+		if (lut_cfg->flags & IGC_DITHER_ENABLE) {
+			reg |= BIT(4);
+			reg |= (lut_cfg->strength & IGC_DITHER_DATA_MASK);
+		}
 	}
 
 	REG_DMA_SETUP_OPS(dma_write_cfg, ctx->cap->sblk->igc.base + 0x4,

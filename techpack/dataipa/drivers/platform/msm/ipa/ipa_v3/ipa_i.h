@@ -454,8 +454,6 @@ enum {
 
 #define MBOX_TOUT_MS 100
 
-#define IPA_RULE_CNT_MAX 512
-
 /* miscellaneous for rmnet_ipa and qmi_service */
 enum ipa_type_mode {
 	IPA_HW_TYPE,
@@ -2852,6 +2850,8 @@ int ipa3_inc_client_enable_clks_no_block(struct ipa_active_client_logging_info
 		*id);
 void ipa3_dec_client_disable_clks_no_block(
 	struct ipa_active_client_logging_info *id);
+void ipa3_dec_client_disable_clks_delay_wq(
+	struct ipa_active_client_logging_info *id, unsigned long delay);
 void ipa3_active_clients_log_dec(struct ipa_active_client_logging_info *id,
 		bool int_ctx);
 void ipa3_active_clients_log_inc(struct ipa_active_client_logging_info *id,

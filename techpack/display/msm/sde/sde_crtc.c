@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -40,7 +40,24 @@
 #include "sde_power_handle.h"
 #include "sde_core_perf.h"
 #include "sde_trace.h"
-#include "sde_vm.h"
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.Lcd.Stability, 2018-11-21
+ * Add for drm notifier for display connect
+*/
+#include <linux/msm_drm_notify.h>
+#include <linux/notifier.h>
+#include "oplus_display_private_api.h"
+#include "oplus_onscreenfingerprint.h"
+
+extern int oplus_dimlayer_fingerprint_failcount;
+extern int oplus_underbrightness_alpha;
+extern int msm_drm_notifier_call_chain(unsigned long val, void *v);
+#endif
+
+#ifdef OPLUS_BUG_STABILITY
+/* CaiHuiyue@MULTIMEDIA, 2020/10/22, oplus adfr */
+#include "oplus_adfr.h"
+#endif
 
 #define SDE_PSTATES_MAX (SDE_STAGE_MAX * 4)
 #define SDE_MULTIRECT_PLANE_MAX (SDE_STAGE_MAX * 2)
@@ -112,6 +129,15 @@ static inline struct sde_kms *_sde_crtc_get_kms(struct drm_crtc *crtc)
 
 	return to_sde_kms(priv->kms);
 }
+
+#ifdef OPLUS_BUG_STABILITY
+/* QianXu@MM.Display.LCD.Stability, 2020/3/31, for decoupling display driver */
+struct sde_kms *_sde_crtc_get_kms_(struct drm_crtc *crtc)
+{
+	return _sde_crtc_get_kms(crtc);
+}
+EXPORT_SYMBOL(_sde_crtc_get_kms_);
+#endif
 
 /**
  * sde_crtc_calc_fps() - Calculates fps value.
@@ -475,6 +501,11 @@ static void _sde_crtc_setup_blend_cfg(struct sde_crtc_mixer *mixer,
 
 	/* default to opaque blending */
 	fg_alpha = sde_plane_get_property(pstate, PLANE_PROP_ALPHA);
+	#ifdef OPLUS_BUG_STABILITY
+	/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-01-12 support plane skip */
+	if (pstate->is_skip)
+		fg_alpha = 0;
+	#endif /* OPLUS_BUG_STABILITY */
 	bg_alpha = 0xFF - fg_alpha;
 	blend_op = SDE_BLEND_FG_ALPHA_FG_CONST | SDE_BLEND_BG_ALPHA_BG_CONST;
 	blend_type = sde_plane_get_property(pstate, PLANE_PROP_BLEND_OP);
@@ -1062,6 +1093,11 @@ static int _sde_crtc_check_planes_within_crtc_roi(struct drm_crtc *crtc,
 	return 0;
 }
 
+#ifdef OPLUS_BUG_STABILITY
+/*LiPing-M@PSW.MM.Display.LCD.Stable,2021-02-08 fix pcc abnormal on onscreenfinger scene */
+extern void sde_cp_crtc_pcc_change(struct drm_crtc *crtc_drm);
+#endif
+
 static int _sde_crtc_check_rois(struct drm_crtc *crtc,
 		struct drm_crtc_state *state)
 {
@@ -1193,9 +1229,6 @@ static int pstate_cmp(const void *a, const void *b)
 	int rc = 0;
 	int pa_zpos, pb_zpos;
 	enum sde_layout pa_layout, pb_layout;
-
-	if ((!pa || !pa->sde_pstate) || (!pb || !pb->sde_pstate))
-		return rc;
 
 	pa_zpos = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_ZPOS);
 	pb_zpos = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_ZPOS);
@@ -1559,8 +1592,39 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 			for (i = 0; i < cstate->num_dim_layers; i++)
 				_sde_crtc_setup_dim_layer_cfg(crtc, sde_crtc,
 						mixer, &cstate->dim_layer[i]);
-			clear_bit(SDE_CRTC_DIRTY_DIM_LAYERS, cstate->dirty);
+
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.Service.Feature,2018/11/21
+ * For OnScreenFingerprint feature
+*/
+		if (cstate->fingerprint_dim_layer) {
+			bool is_dim_valid = true;
+			uint32_t zpos_max = 0;
+
+			drm_atomic_crtc_for_each_plane(plane, crtc) {
+				state = plane->state;
+				if (!state)
+					continue;
+				pstate = to_sde_plane_state(state);
+
+				if (zpos_max < pstate->stage)
+					zpos_max = pstate->stage;
+				SDE_EVT32(pstate->stage, cstate->fingerprint_dim_layer->stage, zpos_max);
+				if (pstate->stage == cstate->fingerprint_dim_layer->stage) {
+					is_dim_valid = false;
+					oplus_dimlayer_fingerprint_failcount++;
+					SDE_ERROR("Skip fingerprint_dim_layer as it shared plane stage %d %d\n",
+							pstate->stage, cstate->fingerprint_dim_layer->stage);
+					SDE_EVT32(pstate->stage, cstate->fingerprint_dim_layer->stage, zpos_max, oplus_dimlayer_fingerprint_failcount);
+				}
+			}
+			if (is_dim_valid) {
+				_sde_crtc_setup_dim_layer_cfg(crtc, sde_crtc,
+						mixer, cstate->fingerprint_dim_layer);
+			}
+			}
 		}
+#endif
 	}
 
 end:
@@ -2232,12 +2296,12 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 	SDE_DEBUG("crtc%d\n", crtc->base.id);
 	SDE_EVT32_VERBOSE(DRMID(crtc), event);
 
-	spin_lock_irqsave(&sde_crtc->spin_lock, flags);
+	spin_lock_irqsave(&sde_crtc->fevent_spin_lock, flags);
 	fevent = list_first_entry_or_null(&sde_crtc->frame_event_list,
 			struct sde_crtc_frame_event, list);
 	if (fevent)
 		list_del_init(&fevent->list);
-	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
+	spin_unlock_irqrestore(&sde_crtc->fevent_spin_lock, flags);
 
 	if (!fevent) {
 		SDE_ERROR("crtc%d event %d overflow\n",
@@ -2532,16 +2596,27 @@ static void sde_crtc_frame_event_work(struct kthread_work *work)
 				(fevent->event & SDE_ENCODER_FRAME_EVENT_ERROR)
 				? SDE_FENCE_SIGNAL_ERROR : SDE_FENCE_SIGNAL);
 
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	if (oplus_adfr_is_support()) {
+		sde_crtc_adfr_handle_frame_event(crtc, fevent);
+	}
+#endif
+
 	if (fevent->event & SDE_ENCODER_FRAME_EVENT_PANEL_DEAD)
 		SDE_ERROR("crtc%d ts:%lld received panel dead event\n",
 				crtc->base.id, ktime_to_ns(fevent->ts));
 
-	spin_lock_irqsave(&sde_crtc->spin_lock, flags);
+	spin_lock_irqsave(&sde_crtc->fevent_spin_lock, flags);
 	list_add_tail(&fevent->list, &sde_crtc->frame_event_list);
-	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
+	spin_unlock_irqrestore(&sde_crtc->fevent_spin_lock, flags);
 	SDE_ATRACE_END("crtc_frame_event");
 }
-
+#ifdef OPLUS_BUG_STABILITY
+/*Mark.Yao@PSW.MM.Display.LCD.Feature,2019-07-25 support onscreenfinger */
+extern u32 oplus_onscreenfp_vblank_count;
+extern ktime_t oplus_onscreenfp_pressed_time;
+#endif /* OPLUS_BUG_STABILITY */
 void sde_crtc_complete_commit(struct drm_crtc *crtc,
 		struct drm_crtc_state *old_state)
 {
@@ -2556,6 +2631,73 @@ void sde_crtc_complete_commit(struct drm_crtc *crtc,
 	SDE_EVT32_VERBOSE(DRMID(crtc));
 
 	sde_core_perf_crtc_update(crtc, 0, false);
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Add for OnScreenFingerprint
+*/
+	{
+		struct sde_crtc_state *old_cstate;
+		struct sde_crtc_state *cstate;
+		struct msm_drm_notifier notifier_data;
+		int blank;
+
+		if (!old_state) {
+			SDE_ERROR("failed to find old cstate");
+			return;
+		}
+		old_cstate = to_sde_crtc_state(old_state);
+		cstate = to_sde_crtc_state(crtc->state);
+
+		if (old_cstate->fingerprint_pressed != cstate->fingerprint_pressed) {
+			blank = cstate->fingerprint_pressed;
+			notifier_data.data = &blank;
+
+			if (cstate->fingerprint_defer_sync) {
+				u32 target_vblank = oplus_onscreenfp_vblank_count + 1;
+				#if IS_ENABLED(CONFIG_QGKI)
+				ktime_t vblanktime, exp_ktime;
+				#endif
+				u32 current_vblank;
+				int ret;
+
+				#if IS_ENABLED(CONFIG_QGKI)
+				current_vblank = drm_crtc_vblank_count_and_time(crtc, &vblanktime);
+
+				/*
+				 * possible hbm setting insert hardware te irq and soft vblank update
+				 * cause vblank calc error, add 4ms check to avoid this scene
+				 */
+				if (current_vblank == (oplus_onscreenfp_vblank_count + 1)) {
+					exp_ktime = ktime_add_ms(oplus_onscreenfp_pressed_time, 4);
+					if (ktime_compare_safe(exp_ktime, vblanktime) > 0) {
+						target_vblank++;
+						pr_err("hbm setting may hit into hardware irq and soft update, wait one more vblank\n");
+					}
+				}
+				#else
+				current_vblank = drm_crtc_vblank_count(crtc);
+				#endif
+
+				ret = wait_event_timeout(*drm_crtc_vblank_waitqueue(crtc),
+						target_vblank <= drm_crtc_vblank_count(crtc),
+						msecs_to_jiffies(50));
+				if (!ret)
+					pr_err("[fingerprint CRTC:%d:%s] vblank wait timed out\n",
+					       crtc->base.id, crtc->name);
+
+				if (current_vblank == drm_crtc_vblank_count(crtc)) {
+						ret = wait_event_timeout(*drm_crtc_vblank_waitqueue(crtc),
+							current_vblank != drm_crtc_vblank_count(crtc),
+							msecs_to_jiffies(17));
+				}
+			}
+			pr_err("fingerprint status: %s",
+			       blank ? "pressed" : "up");
+			msm_drm_notifier_call_chain(MSM_DRM_ONSCREENFINGERPRINT_EVENT,
+					&notifier_data);
+		}
+	}
+#endif /* OPLUS_BUG_STABILITY */
 }
 
 /**
@@ -3257,6 +3399,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	struct drm_encoder *encoder;
 	struct drm_device *dev;
 	struct sde_kms *sde_kms;
+	struct drm_plane *plane;
 	struct sde_splash_display *splash_display;
 	bool cont_splash_enabled = false, apply_cp_prop = false;
 	size_t i;
@@ -3316,8 +3459,14 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	_sde_crtc_blend_setup(crtc, old_state, true);
 	_sde_crtc_dest_scaler_setup(crtc);
 
-	if (crtc->state->mode_changed)
+	if (old_state->mode_changed) {
 		sde_core_perf_crtc_update_uidle(crtc, true);
+		drm_atomic_crtc_for_each_plane(plane, crtc) {
+			if (plane->state && plane->state->fb)
+				_sde_plane_set_qos_lut(plane, crtc,
+					plane->state->fb);
+		}
+	}
 
 	/*
 	 * Since CP properties use AXI buffer to program the
@@ -3335,6 +3484,19 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 
 	apply_cp_prop = sde_kms->catalog->trusted_vm_env ?
 			true : sde_crtc->enabled;
+#ifdef OPLUS_BUG_STABILITY
+/*LiPing-M@PSW.MM.Display.LCD.Stable,2021-02-08 fix pcc abnormal on onscreenfinger scene */
+	if (is_dsi_panel(crtc)) {
+		struct sde_crtc_state *new_sde_state = to_sde_crtc_state(crtc->state);
+		struct sde_crtc_state *old_sde_state = to_sde_crtc_state(old_state);
+
+		if (new_sde_state->fingerprint_mode != old_sde_state->fingerprint_mode
+			|| new_sde_state->aod_skip_pcc != old_sde_state->aod_skip_pcc) {
+			pr_err("oplus_pcc: %s %d\n", __func__, __LINE__);
+			sde_cp_crtc_pcc_change(crtc);
+		}
+	}
+#endif  /* OPLUS_BUG_STABILITY */
 	if (sde_kms_is_cp_operation_allowed(sde_kms) &&
 			(cont_splash_enabled || apply_cp_prop))
 		sde_cp_crtc_apply_properties(crtc);
@@ -3498,7 +3660,7 @@ static void sde_crtc_destroy_state(struct drm_crtc *crtc,
 			&cstate->property_state);
 }
 
-static int _sde_crtc_flush_frame_events(struct drm_crtc *crtc)
+static int _sde_crtc_flush_event_thread(struct drm_crtc *crtc)
 {
 	struct sde_crtc *sde_crtc;
 	int i;
@@ -3774,7 +3936,7 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 
 	sde_crtc_calc_fps(sde_crtc);
 	SDE_ATRACE_BEGIN("flush_event_thread");
-	_sde_crtc_flush_frame_events(crtc);
+	_sde_crtc_flush_event_thread(crtc);
 	SDE_ATRACE_END("flush_event_thread");
 	sde_crtc->plane_mask_old = crtc->state->plane_mask;
 
@@ -3817,13 +3979,13 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 }
 
 /**
- * _sde_crtc_vblank_enable - update power resource and vblank request
+ * _sde_crtc_vblank_enable_no_lock - update power resource and vblank request
  * @sde_crtc: Pointer to sde crtc structure
  * @enable: Whether to enable/disable vblanks
  *
  * @Return: error code
  */
-static int _sde_crtc_vblank_enable(
+static int _sde_crtc_vblank_enable_no_lock(
 		struct sde_crtc *sde_crtc, bool enable)
 {
 	struct drm_crtc *crtc;
@@ -3835,38 +3997,38 @@ static int _sde_crtc_vblank_enable(
 	}
 
 	crtc = &sde_crtc->base;
-	SDE_EVT32(DRMID(crtc), enable, sde_crtc->enabled,
-			crtc->state->encoder_mask,
-			sde_crtc->cached_encoder_mask);
 
 	if (enable) {
 		int ret;
 
+		/* drop lock since power crtc cb may try to re-acquire lock */
+		mutex_unlock(&sde_crtc->crtc_lock);
 		ret = pm_runtime_get_sync(crtc->dev->dev);
+		mutex_lock(&sde_crtc->crtc_lock);
 		if (ret < 0)
 			return ret;
 
-		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev,
-				sde_crtc->cached_encoder_mask) {
-			SDE_EVT32(DRMID(crtc), DRMID(enc));
+				crtc->state->encoder_mask) {
+			SDE_EVT32(DRMID(&sde_crtc->base), DRMID(enc), enable,
+					sde_crtc->enabled);
 
 			sde_encoder_register_vblank_callback(enc,
 					sde_crtc_vblank_cb, (void *)crtc);
 		}
-
-		mutex_unlock(&sde_crtc->crtc_lock);
 	} else {
-		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev,
-				sde_crtc->cached_encoder_mask) {
-			SDE_EVT32(DRMID(crtc), DRMID(enc));
+				crtc->state->encoder_mask) {
+			SDE_EVT32(DRMID(&sde_crtc->base), DRMID(enc), enable,
+					sde_crtc->enabled);
 
 			sde_encoder_register_vblank_callback(enc, NULL, NULL);
 		}
 
+		/* drop lock since power crtc cb may try to re-acquire lock */
 		mutex_unlock(&sde_crtc->crtc_lock);
 		pm_runtime_put_sync(crtc->dev->dev);
+		mutex_lock(&sde_crtc->crtc_lock);
 	}
 
 	return 0;
@@ -3968,7 +4130,7 @@ static void sde_crtc_clear_cached_mixer_cfg(struct drm_crtc *crtc)
 	SDE_EVT32(DRMID(crtc));
 }
 
-void sde_crtc_reset_sw_state(struct drm_crtc *crtc)
+static void sde_crtc_reset_sw_state_for_ipc(struct drm_crtc *crtc)
 {
 	struct sde_crtc_state *cstate = to_sde_crtc_state(crtc->state);
 	struct drm_plane *plane;
@@ -4071,7 +4233,7 @@ static void sde_crtc_handle_power_event(u32 event_type, void *arg)
 		sde_cp_crtc_pre_ipc(crtc);
 		break;
 	case SDE_POWER_EVENT_POST_DISABLE:
-		sde_crtc_reset_sw_state(crtc);
+		sde_crtc_reset_sw_state_for_ipc(crtc);
 		sde_cp_crtc_suspend(crtc);
 		event.type = DRM_EVENT_SDE_POWER;
 		event.length = sizeof(power_on);
@@ -4156,16 +4318,15 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 			(u8 *)&power_on);
 
 	mutex_unlock(&sde_crtc->crtc_lock);
-	kthread_flush_worker(&priv->event_thread[crtc->index].worker);
+	_sde_crtc_flush_event_thread(crtc);
 	mutex_lock(&sde_crtc->crtc_lock);
 
 	kthread_cancel_delayed_work_sync(&sde_crtc->static_cache_read_work);
 	kthread_cancel_delayed_work_sync(&sde_crtc->idle_notify_work);
 
-	SDE_EVT32(DRMID(crtc), sde_crtc->enabled, crtc->state->active,
-			crtc->state->enable, sde_crtc->cached_encoder_mask);
+	SDE_EVT32(DRMID(crtc), sde_crtc->enabled,
+			crtc->state->active, crtc->state->enable);
 	sde_crtc->enabled = false;
-	sde_crtc->cached_encoder_mask = 0;
 
 	/* Try to disable uidle */
 	sde_core_perf_crtc_update_uidle(crtc, false);
@@ -4274,11 +4435,8 @@ static void sde_crtc_enable(struct drm_crtc *crtc,
 	 * Avoid drm_crtc_vblank_on during seamless DMS case
 	 * when CRTC is already in enabled state
 	 */
-	if (!sde_crtc->enabled) {
-		/* cache the encoder mask now for vblank work */
-		sde_crtc->cached_encoder_mask = crtc->state->encoder_mask;
+	if (!sde_crtc->enabled)
 		drm_crtc_vblank_on(crtc);
-	}
 
 	mutex_lock(&sde_crtc->crtc_lock);
 	SDE_EVT32(DRMID(crtc), sde_crtc->enabled);
@@ -4654,6 +4812,200 @@ static int _sde_crtc_check_secure_state(struct drm_crtc *crtc,
 	return 0;
 }
 
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Add for OnScreenFingerprint
+*/
+extern int oplus_onscreenfp_status;
+extern int lcd_closebl_flag_fp;
+extern int oplus_dimlayer_hbm;
+extern int oplus_dimlayer_bl_alpha_value;
+extern int oplus_dimlayer_bl_enable;
+extern bool oplus_ffl_trigger_finish;
+extern int oplus_dimlayer_bl;
+extern ktime_t oplus_backlight_time;
+extern u32 oplus_backlight_delta;
+
+static int sde_crtc_onscreenfinger_atomic_check(struct sde_crtc_state *cstate,
+		struct plane_state *pstates, int cnt)
+{
+	int fp_index = -1;
+	int fppressed_index = -1;
+	int aod_index = -1;
+	int zpos = INT_MAX;
+	int mode;
+	int fp_mode = oplus_onscreenfp_status;
+	int dimlayer_hbm = oplus_dimlayer_hbm;
+	int dimlayer_bl = 0;
+	int i;
+	//#ifdef OPLUS_BUG_STABILITY
+	/*Fox.zhang@PSW.MM.Display.LCD.Feature,2020-12-30 modify for softiris backlight */
+	struct dsi_display *display = get_main_display();
+
+	if (!display) {
+		pr_err("failed to find display\n");
+		return -EINVAL;
+	}
+	//#endif
+
+	for (i = 0; i < cnt; i++) {
+		mode = sde_plane_check_fingerprint_layer(pstates[i].drm_pstate);
+		if (mode == 1)
+			fp_index = i;
+		if (mode == 2)
+			fppressed_index = i;
+		if (mode == 3)
+			aod_index = i;
+		if (pstates[i].sde_pstate)
+			pstates[i].sde_pstate->is_skip = false;
+	}
+
+	if (!is_dsi_panel(cstate->base.crtc))
+		return 0;
+
+	if (oplus_dimlayer_bl_enable) {
+		int backlight = oplus_get_panel_brightness();
+
+		//#ifdef OPLUS_BUG_STABILITY
+		/*Fox.zhang@PSW.MM.Display.LCD.Feature,2020-12-30 modify for softiris backlight */
+		if ((!strcmp(display->panel->oplus_priv.vendor_name, "AMB655X"))
+		|| (!strcmp(display->panel->oplus_priv.vendor_name, "AMB670YF01"))) {
+			if (backlight >= 1 && backlight < oplus_dimlayer_bl_alpha_value &&
+				oplus_ffl_trigger_finish == true && !dimlayer_hbm) {
+				ktime_t now = ktime_get();
+				ktime_t delta = ktime_sub(now, oplus_backlight_time);
+
+				if (oplus_backlight_delta > 9) {
+					if (oplus_dimlayer_bl == 0 && ktime_to_ns(delta) > 25000000)
+						oplus_dimlayer_bl = 1;
+				} else {
+					oplus_dimlayer_bl = 1;
+				}
+				if (oplus_dimlayer_bl)
+					dimlayer_bl = 1;
+			} else {
+				oplus_dimlayer_bl = 0;
+			}
+		} else {
+			if (backlight > 1 && backlight < oplus_dimlayer_bl_alpha_value &&
+				oplus_ffl_trigger_finish == true && !dimlayer_hbm) {
+				ktime_t now = ktime_get();
+				ktime_t delta = ktime_sub(now, oplus_backlight_time);
+
+				if (oplus_backlight_delta > 9) {
+					if (oplus_dimlayer_bl == 0 && ktime_to_ns(delta) > 25000000)
+						oplus_dimlayer_bl = 1;
+				} else {
+					oplus_dimlayer_bl = 1;
+				}
+				if (oplus_dimlayer_bl)
+					dimlayer_bl = 1;
+			} else {
+				oplus_dimlayer_bl = 0;
+			}
+		}
+		//#endif
+	} else {
+		oplus_dimlayer_bl = 0;
+	}
+
+	if (fppressed_index >= 0) {
+		if (fp_mode == 0) {
+			pstates[fppressed_index].sde_pstate->is_skip = true;
+			fppressed_index = -1;
+		}
+	}
+
+	if (aod_index >= 0)
+		cstate->aod_skip_pcc = true;
+	else
+		cstate->aod_skip_pcc = false;
+
+	SDE_EVT32(cstate->fingerprint_dim_layer);
+	cstate->fingerprint_dim_layer = NULL;
+	cstate->fingerprint_mode = false;
+	cstate->fingerprint_pressed = false;
+
+	if (dimlayer_hbm || dimlayer_bl) {
+		if (fp_index >= 0 && fppressed_index >= 0) {
+			if (pstates[fp_index].stage >= pstates[fppressed_index].stage) {
+				SDE_ERROR("Bug!!: fp layer top of fppressed layer\n");
+				return -EINVAL;
+			}
+		}
+
+		if (lcd_closebl_flag_fp) {
+			oplus_underbrightness_alpha = 0;
+			cstate->fingerprint_dim_layer = NULL;
+			cstate->fingerprint_mode = false;
+			return 0;
+		}
+
+		if ( dimlayer_hbm && display->panel->bl_config.bl_level != 0)
+			cstate->fingerprint_mode = true;
+		else
+			cstate->fingerprint_mode = false;
+
+		SDE_DEBUG("debug for get cstate->fingerprint_mode = %d\n", cstate->fingerprint_mode);
+
+		if (aod_index >= 0) {
+			if (zpos > pstates[aod_index].stage)
+				zpos = pstates[aod_index].stage;
+			pstates[aod_index].stage++;
+		}
+		if (fppressed_index >= 0) {
+			if (zpos > pstates[fppressed_index].stage)
+				zpos = pstates[fppressed_index].stage;
+			pstates[fppressed_index].stage++;
+		}
+		if (fp_index >= 0) {
+			if (zpos > pstates[fp_index].stage)
+				zpos = pstates[fp_index].stage;
+			pstates[fp_index].stage++;
+		}
+
+		for (i = 0; i < cnt; i++) {
+			if (i == fp_index || i == fppressed_index ||
+			    i == aod_index)
+				continue;
+			if (pstates[i].stage >= zpos) {
+				pstates[i].stage++;
+			}
+		}
+
+		if (zpos == INT_MAX) {
+			zpos = 0;
+			for (i = 0; i < cnt; i++) {
+				if (pstates[i].stage > zpos)
+					zpos = pstates[i].stage;
+			}
+			zpos++;
+		}
+
+		SDE_EVT32(zpos, fp_index, aod_index, fppressed_index, cstate->num_dim_layers);
+		if (sde_crtc_config_fingerprint_dim_layer(&cstate->base, zpos)) {
+			//SDE_ERROR("Failed to config dim layer\n");
+			SDE_EVT32(zpos, fp_index, aod_index, fppressed_index, cstate->num_dim_layers);
+			return -EINVAL;
+		}
+		if (fppressed_index >= 0)
+			cstate->fingerprint_pressed = true;
+		else
+			cstate->fingerprint_pressed = false;
+
+		SDE_DEBUG("debug for get cstate->fingerprint_pressed = %d\n", cstate->fingerprint_pressed);
+	} else {
+		oplus_underbrightness_alpha = 0;
+		cstate->fingerprint_dim_layer = NULL;
+		cstate->fingerprint_mode = false;
+		cstate->fingerprint_pressed = false;
+	}
+	SDE_EVT32(cstate->fingerprint_dim_layer);
+
+	return 0;
+}
+#endif /* OPLUS_BUG_STABILITY */
+
 static int _sde_crtc_check_get_pstates(struct drm_crtc *crtc,
 		struct drm_crtc_state *state,
 		struct drm_display_mode *mode,
@@ -4884,6 +5236,14 @@ static int _sde_crtc_atomic_check_pstates(struct drm_crtc *crtc,
 	if (rc)
 		return rc;
 
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.Service.Feature,2018/11/21
+ * For OnScreenFingerprint feature
+*/
+	rc = sde_crtc_onscreenfinger_atomic_check(cstate, pstates, cnt);
+	if (rc)
+		return rc;
+#endif
 	/* assign mixer stages based on sorted zpos property */
 	rc = _sde_crtc_check_zpos(state, sde_crtc, pstates, cstate, mode, cnt);
 	if (rc)
@@ -5117,10 +5477,14 @@ int sde_crtc_vblank(struct drm_crtc *crtc, bool en)
 	}
 	sde_crtc = to_sde_crtc(crtc);
 
-	ret = _sde_crtc_vblank_enable(sde_crtc, en);
+	mutex_lock(&sde_crtc->crtc_lock);
+	SDE_EVT32(DRMID(&sde_crtc->base), en, sde_crtc->enabled);
+	ret = _sde_crtc_vblank_enable_no_lock(sde_crtc, en);
 	if (ret)
 		SDE_ERROR("%s vblank enable failed: %d\n",
 				sde_crtc->name, ret);
+
+	mutex_unlock(&sde_crtc->crtc_lock);
 
 	return 0;
 }
@@ -5422,6 +5786,14 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 			ARRAY_SIZE(e_secure_level), 0,
 			CRTC_PROP_SECURITY_LEVEL);
 
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Support custom propertys
+*/
+	msm_property_install_range(&sde_crtc->property_info,"CRTC_CUST",
+		0x0, 0, INT_MAX, 0, CRTC_PROP_CUSTOM);
+#endif
+
 	if (catalog->syscache_supported)
 		msm_property_install_enum(&sde_crtc->property_info, "cache_state",
 			0x0, 0, e_cache_state,
@@ -5431,8 +5803,14 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 	if (catalog->has_dim_layer) {
 		msm_property_install_volatile_range(&sde_crtc->property_info,
 			"dim_layer_v1", 0x0, 0, ~0, 0, CRTC_PROP_DIM_LAYER_V1);
+		#ifdef OPLUS_BUG_STABILITY
+		/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-04-17 fix dc backlight aging test fail */
+		sde_kms_info_add_keyint(info, "dim_layer_v1_max_layers",
+				SDE_MAX_DIM_LAYERS-1);
+		#else
 		sde_kms_info_add_keyint(info, "dim_layer_v1_max_layers",
 				SDE_MAX_DIM_LAYERS);
+		#endif
 	}
 
 	if (catalog->mdp[0].has_dest_scaler)
@@ -5997,7 +6375,6 @@ static ssize_t _sde_crtc_misr_read(struct file *file,
 	struct sde_crtc *sde_crtc;
 	struct sde_kms *sde_kms;
 	struct sde_crtc_mixer *m;
-	struct sde_vm_ops *vm_ops;
 	int i = 0, rc;
 	ssize_t len = 0;
 	char buf[MISR_BUFF_SIZE + 1] = {'\0'};
@@ -6018,17 +6395,8 @@ static ssize_t _sde_crtc_misr_read(struct file *file,
 	if (rc < 0)
 		return rc;
 
-	vm_ops = sde_vm_get_ops(sde_kms);
-	sde_vm_lock(sde_kms);
-	if (vm_ops && vm_ops->vm_owns_hw && !vm_ops->vm_owns_hw(sde_kms)) {
-		SDE_DEBUG("op not supported due to HW unavailability\n");
-		rc = -EOPNOTSUPP;
-		goto end;
-	}
-
 	if (sde_kms_is_secure_session_inprogress(sde_kms)) {
 		SDE_DEBUG("crtc:%d misr read not allowed\n", DRMID(crtc));
-		rc = -EOPNOTSUPP;
 		goto end;
 	}
 
@@ -6078,7 +6446,6 @@ buff_check:
 	*ppos += len;   /* increase offset */
 
 end:
-	sde_vm_unlock(sde_kms);
 	pm_runtime_put_sync(crtc->dev->dev);
 	return len;
 }
@@ -6591,6 +6958,7 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 
 	mutex_init(&sde_crtc->crtc_lock);
 	spin_lock_init(&sde_crtc->spin_lock);
+	spin_lock_init(&sde_crtc->fevent_spin_lock);
 	atomic_set(&sde_crtc->frame_pending, 0);
 
 	sde_crtc->enabled = false;

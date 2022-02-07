@@ -8,6 +8,14 @@
 
 #include "walt.h"
 
+#ifdef CONFIG_OPLUS_FEATURE_CPUFREQ_BOUNCING
+#include <linux/cpufreq_bouncing/cpufreq_bouncing.h>
+#endif
+
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <linux/sched_assist/sched_assist_slide.h>
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
+
 #ifdef CONFIG_SCHED_WALT
 /* 1ms default for 20ms window size scaled to 1024 */
 unsigned int sysctl_sched_min_task_util_for_boost = 51;
@@ -168,7 +176,11 @@ void check_for_migration(struct rq *rq, struct task_struct *p)
 	int prev_cpu = task_cpu(p);
 	int ret;
 
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (rq->misfit_task_load || slide_task_misfit(p, prev_cpu)) {
+#else
 	if (rq->misfit_task_load) {
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 		if (rq->curr->state != TASK_RUNNING ||
 		    rq->curr->nr_cpus_allowed == 1)
 			return;
@@ -645,6 +657,9 @@ int sched_isolate_cpu(int cpu)
 	calc_load_migrate(rq);
 	update_max_interval();
 	sched_update_group_capacities(cpu);
+#ifdef CONFIG_OPLUS_FEATURE_CPUFREQ_BOUNCING
+	cb_reset(cpu, start_time);
+#endif
 
 out:
 	cpu_maps_update_done();
@@ -672,6 +687,10 @@ int sched_unisolate_cpu_unlocked(int cpu)
 
 	if (trace_sched_isolate_enabled())
 		start_time = sched_clock();
+
+#ifdef CONFIG_OPLUS_FEATURE_CPUFREQ_BOUNCING
+	cb_reset(cpu, start_time);
+#endif
 
 	if (!cpu_isolation_vote[cpu]) {
 		ret_code = -EINVAL;

@@ -13,6 +13,11 @@
 #include "sde_trace.h"
 #include "sde_dbg.h"
 
+#ifdef OPLUS_BUG_STABILITY
+/* CaiHuiyue@MULTIMEDIA, 2020/10/22, oplus adfr */
+#include "oplus_adfr.h"
+#endif
+
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 #define to_dsi_state(x)      container_of((x), struct dsi_connector_state, base)
 
@@ -142,11 +147,31 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 	if (dsi_mode->panel_mode == DSI_OP_CMD_MODE)
 		drm_mode->flags |= DRM_MODE_FLAG_CMD_MODE_PANEL;
 
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/11/10, qcom patch for two TE source */
+	/* move source string to head to avoid missing */
+	/* qcom use node /sys/class/drm/card0-DSI-1/modes to check panel resolution */
+	/* check width value by the first value in mode name, so magic code can not at head */
+	/* please refer the qcom check logic in the file init.qcom.early_boot.sh */
+	/* set mode name */
+	if (oplus_adfr_is_support()) {
+		snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%dx%d%sx%d",
+				drm_mode->hdisplay, drm_mode->vdisplay, drm_mode->vrefresh,
+				dsi_mode->vsync_source, video_mode ? "vid" : "cmd",
+				drm_mode->clock);
+	} else {
+		snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%dx%d%s",
+			drm_mode->hdisplay, drm_mode->vdisplay,
+			drm_mode->vrefresh, drm_mode->clock,
+			video_mode ? "vid" : "cmd");
+	}
+#else
 	/* set mode name */
 	snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%dx%d%s",
 			drm_mode->hdisplay, drm_mode->vdisplay,
 			drm_mode->vrefresh, drm_mode->clock,
 			video_mode ? "vid" : "cmd");
+#endif
 }
 
 static int dsi_bridge_attach(struct drm_bridge *bridge)
@@ -254,6 +279,7 @@ static void dsi_bridge_enable(struct drm_bridge *bridge)
 		if (c_bridge->dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_POMS)
 			sde_connector_schedule_status_work(display->drm_conn,
 				true);
+		sde_connector_helper_post_kickoff(display->drm_conn);
 	}
 }
 
@@ -391,6 +417,14 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 	dsi_mode.timing.dsc_enabled = dsi_mode.priv_info->dsc_enabled;
 	dsi_mode.timing.dsc = &dsi_mode.priv_info->dsc;
 
+#ifdef OPLUS_BUG_STABILITY
+	/* CaiHuiyue@MULTIMEDIA, 2020/11/10, qcom patch for two TE source */
+	/* add vsync spurce info from panel_dsi_mode to dsi_mode */
+	if (oplus_adfr_is_support()) {
+		dsi_mode.vsync_source = panel_dsi_mode->vsync_source;
+	}
+#endif
+
 	rc = dsi_display_validate_mode(c_bridge->display, &dsi_mode,
 			DSI_VALIDATE_FLAG_ALLOW_ADJUST);
 	if (rc) {
@@ -445,6 +479,11 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 				dsi_mode.panel_mode);
 		}
 	}
+#ifdef OPLUS_BUG_STABILITY
+	/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-12-09 skip dms switch if cont_splash not ready */
+	if (display->is_cont_splash_enabled)
+		dsi_mode.dsi_mode_flags &= ~DSI_MODE_FLAG_DMS;
+#endif /* OPLUS_BUG_STABILITY */
 
 	/* Reject seamless transition when active changed */
 	if (crtc_state->active_changed &&

@@ -2769,7 +2769,6 @@ static int msm_dai_q6_hw_params(struct snd_pcm_substream *substream,
 	case RT_PROXY_DAI_002_TX:
 	case RT_PROXY_DAI_002_RX:
 	case RT_PROXY_DAI_003_TX:
-	case RT_PROXY_DAI_003_RX:
 	case RT_PROXY_PORT_002_TX:
 	case RT_PROXY_PORT_002_RX:
 		rc = msm_dai_q6_afe_rtproxy_hw_params(params, dai);
@@ -4092,10 +4091,6 @@ static const struct soc_enum rt_proxy_1_rx_enum =
 	SOC_ENUM_SINGLE(RT_PROXY_PORT_001_RX, 0, ARRAY_SIZE(afe_cal_mode_text),
 			afe_cal_mode_text);
 
-static const struct soc_enum rt_proxy_2_rx_enum =
-	SOC_ENUM_SINGLE(RT_PROXY_PORT_002_RX, 0, ARRAY_SIZE(afe_cal_mode_text),
-			afe_cal_mode_text);
-
 static const struct soc_enum rt_proxy_1_tx_enum =
 	SOC_ENUM_SINGLE(RT_PROXY_PORT_001_TX, 0, ARRAY_SIZE(afe_cal_mode_text),
 			afe_cal_mode_text);
@@ -4117,14 +4112,11 @@ static const struct snd_kcontrol_new sb_config_controls[] = {
 
 static const struct snd_kcontrol_new rt_proxy_config_controls[] = {
 	SOC_ENUM_EXT("RT_PROXY_1_RX SetCalMode", rt_proxy_1_rx_enum,
-			msm_dai_q6_cal_info_get,
-			msm_dai_q6_cal_info_put),
+		     msm_dai_q6_cal_info_get,
+		     msm_dai_q6_cal_info_put),
 	SOC_ENUM_EXT("RT_PROXY_1_TX SetCalMode", rt_proxy_1_tx_enum,
-			msm_dai_q6_cal_info_get,
-			msm_dai_q6_cal_info_put),
-	SOC_ENUM_EXT("RT_PROXY_2_RX SetCalMode", rt_proxy_2_rx_enum,
-			msm_dai_q6_cal_info_get,
-			msm_dai_q6_cal_info_put),
+		     msm_dai_q6_cal_info_get,
+		     msm_dai_q6_cal_info_put),
 };
 
 static const struct snd_kcontrol_new usb_audio_cfg_controls[] = {
@@ -4292,11 +4284,6 @@ static int msm_dai_q6_dai_probe(struct snd_soc_dai *dai)
 				 snd_ctl_new1(&rt_proxy_config_controls[1],
 				 dai_data));
 		break;
-	case RT_PROXY_DAI_003_RX:
-		rc = snd_ctl_add(dai->component->card->snd_card,
-				snd_ctl_new1(&rt_proxy_config_controls[2],
-				dai_data));
-		break;
 	case AFE_PORT_ID_USB_RX:
 		rc = snd_ctl_add(dai->component->card->snd_card,
 				 snd_ctl_new1(&usb_audio_cfg_controls[0],
@@ -4391,24 +4378,6 @@ static struct snd_soc_dai_driver msm_dai_q6_afe_rx_dai[] = {
 		},
 		.ops = &msm_dai_q6_ops,
 		.id = RT_PROXY_DAI_002_RX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-	},
-	{
-		.playback = {
-			.stream_name = "AFE Playback1",
-			.aif_name = "PCM_RX1",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-			SNDRV_PCM_RATE_16000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-			SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 2,
-			.rate_min =     8000,
-			.rate_max =     48000,
-		},
-		.ops = &msm_dai_q6_ops,
-		.id = RT_PROXY_DAI_003_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
 	},
@@ -7646,9 +7615,6 @@ register_slim_capture:
 		break;
 	case RT_PROXY_DAI_001_RX:
 		strlcpy(stream_name, "AFE Playback", 80);
-		goto register_afe_playback;
-	case RT_PROXY_DAI_003_RX:
-		strlcpy(stream_name, "AFE Playback1", 80);
 		goto register_afe_playback;
 	case RT_PROXY_DAI_002_RX:
 		strlcpy(stream_name, "AFE-PROXY RX", 80);
@@ -13506,13 +13472,13 @@ static struct platform_driver msm_dai_cdc_dma_q6 = {
 int __init msm_dai_q6_init(void)
 {
 	int rc;
-#ifndef CONFIG_AUXPCM_DISABLE
+
 	rc = platform_driver_register(&msm_auxpcm_dev_driver);
 	if (rc) {
 		pr_err("%s: fail to register auxpcm dev driver", __func__);
-		return rc;
+		goto fail;
 	}
-#endif
+
 	rc = platform_driver_register(&msm_dai_q6);
 	if (rc) {
 		pr_err("%s: fail to register dai q6 driver", __func__);
@@ -13596,6 +13562,7 @@ dai_q6_dev_fail:
 	platform_driver_unregister(&msm_dai_q6);
 dai_q6_fail:
 	platform_driver_unregister(&msm_auxpcm_dev_driver);
+fail:
 	return rc;
 }
 

@@ -1337,7 +1337,6 @@ static int msm_vidc_comm_update_ctrl(struct msm_vidc_inst *inst,
 {
 	struct v4l2_ctrl *ctrl = NULL;
 	int rc = 0;
-	bool is_menu = false;
 
 	ctrl = v4l2_ctrl_find(&inst->ctrl_handler, id);
 	if (!ctrl) {
@@ -1346,32 +1345,33 @@ static int msm_vidc_comm_update_ctrl(struct msm_vidc_inst *inst,
 		return -EINVAL;
 	}
 
+	/* For menu type, keep original menu_skip_mask(step) */
 	if (ctrl->type == V4L2_CTRL_TYPE_MENU)
-		is_menu = true;
+		cap->step_size = (u32)ctrl->step;
 
-	/**
-	 * For menu controls the step value is interpreted
-	 * as a menu_skip_mask.
-	 */
 	rc = v4l2_ctrl_modify_range(ctrl, cap->min, cap->max,
-			is_menu ? ctrl->menu_skip_mask : cap->step_size,
-			cap->default_value);
+			cap->step_size, cap->default_value);
 	if (rc) {
 		s_vpr_e(inst->sid,
-			"%s: failed: control name %s, min %d, max %d, %s %x, default_value %d\n",
+			"%s: failed: control name %s, min %d, max %d, step %d, default_value %d\n",
 			__func__, ctrl->name, cap->min, cap->max,
-			is_menu ? "menu_skip_mask" : "step",
-			is_menu ? ctrl->menu_skip_mask : cap->step_size,
-			cap->default_value);
+			cap->step_size, cap->default_value);
 		goto error;
 	}
-
+	/*
+	 * v4l2_ctrl_modify_range() is not updating default_value,
+	 * so use v4l2_ctrl_s_ctrl() to update it.
+	 */
+	rc = v4l2_ctrl_s_ctrl(ctrl, cap->default_value);
+	if (rc) {
+		s_vpr_e(inst->sid, "%s: failed s_ctrl: %s with value %d\n",
+			__func__, ctrl->name, cap->default_value);
+		goto error;
+	}
 	s_vpr_h(inst->sid,
-		"Updated control: %s: min %lld, max %lld, %s %x, default value = %lld\n",
+		"Updated control: %s: min %lld, max %lld, step %lld, default value = %lld\n",
 		ctrl->name, ctrl->minimum, ctrl->maximum,
-		is_menu ? "menu_skip_mask" : "step",
-		is_menu ? ctrl->menu_skip_mask : ctrl->step,
-		ctrl->default_value);
+		ctrl->step, ctrl->default_value);
 
 error:
 	return rc;
@@ -1777,7 +1777,7 @@ static void handle_event_change(enum hal_command_response cmd, void *data)
 	} else if (rc == -ENOTSUPP) {
 		msm_vidc_queue_v4l2_event(inst,
 				V4L2_EVENT_MSM_VIDC_HW_UNSUPPORTED);
-	} else if (rc == -ENOMEM) {
+	} else if (rc == -EBUSY) {
 		msm_vidc_queue_v4l2_event(inst,
 				V4L2_EVENT_MSM_VIDC_HW_OVERLOAD);
 	}
@@ -5765,9 +5765,8 @@ static int msm_vidc_check_mbpf_supported(struct msm_vidc_inst *inst)
 
 	mutex_lock(&core->lock);
 	list_for_each_entry(temp, &core->instances, list) {
-		/* ignore invalid and completed session */
-		if (temp->state == MSM_VIDC_CORE_INVALID ||
-			temp->state >= MSM_VIDC_STOP_DONE)
+		/* ignore invalid session */
+		if (temp->state == MSM_VIDC_CORE_INVALID)
 			continue;
 		/* ignore thumbnail session */
 		if (is_thumbnail_session(temp))
@@ -5783,7 +5782,7 @@ static int msm_vidc_check_mbpf_supported(struct msm_vidc_inst *inst)
 
 	if (mbpf > core->resources.max_mbpf) {
 		msm_vidc_print_running_insts(inst->core);
-		return -ENOMEM;
+		return -EBUSY;
 	}
 
 	return 0;
@@ -5886,7 +5885,7 @@ int msm_comm_check_memory_supported(struct msm_vidc_inst *vidc_inst)
 		s_vpr_e(vidc_inst->sid,
 			"%s: video mem overshoot - reached %llu MB, max_limit %llu MB\n",
 			__func__, total_mem_size >> 20, memory_limit_mbytes);
-		msm_comm_print_mem_usage(core);
+		msm_comm_print_insts_info(core);
 		return -EBUSY;
 	}
 
@@ -5901,7 +5900,7 @@ int msm_comm_check_memory_supported(struct msm_vidc_inst *vidc_inst)
 			s_vpr_e(vidc_inst->sid,
 				"%s: insufficient device addr space, required %llu, available %llu\n",
 				__func__, non_sec_mem_size, non_sec_cb_size);
-			msm_comm_print_mem_usage(core);
+			msm_comm_print_insts_info(core);
 			return -EINVAL;
 		}
 	}
@@ -5934,7 +5933,7 @@ static int msm_vidc_check_mbps_supported(struct msm_vidc_inst *inst)
 				"H/W is overloaded. needed: %d max: %d\n",
 				video_load, max_video_load);
 			msm_vidc_print_running_insts(inst->core);
-			return -ENOMEM;
+			return -EBUSY;
 		}
 
 		if (video_load + image_load > max_video_load + max_image_load) {
@@ -5943,7 +5942,7 @@ static int msm_vidc_check_mbps_supported(struct msm_vidc_inst *inst)
 				video_load, image_load,
 				max_video_load, max_image_load);
 			msm_vidc_print_running_insts(inst->core);
-			return -ENOMEM;
+			return -EBUSY;
 		}
 	}
 	return 0;
@@ -7802,8 +7801,12 @@ u32 msm_comm_get_max_framerate(struct msm_vidc_inst *inst)
 		count++;
 		avg_framerate += node->framerate;
 	}
+#ifndef OPLUS_ARCH_EXTENDS
+//sunqinhua@MULTIMEDIA.MEDIASERVER.PLAYER.670039, 2020/12/03, add for refine FPS tolerance
 	avg_framerate = count ? (avg_framerate / count) : (1 << 16);
-
+#else /* OPLUS_ARCH_EXTENDS */
+	avg_framerate = count > 12 ? (avg_framerate / count) : (15 << 16);
+#endif /* OPLUS_ARCH_EXTENDS */
 	s_vpr_l(inst->sid, "%s: fps %u, list size %d\n", __func__, avg_framerate, count);
 	mutex_unlock(&inst->timestamps.lock);
 	return (u32)avg_framerate;

@@ -10,7 +10,6 @@
 #include <linux/types.h>
 #include <linux/ioctl.h>
 
-
 /* camera op codes */
 #define CAM_COMMON_OPCODE_BASE                  0x100
 #define CAM_QUERY_CAP                           (CAM_COMMON_OPCODE_BASE + 0x1)
@@ -891,5 +890,9 @@ struct cam_dump_req_cmd {
 	__s32           link_hdl;
 	__s32           dev_handle;
 };
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*lixin@Camera.Drv, 2020/05/25, modify for camera kernel decoupling*/
+	#include "oplus/media/oplus_cam_defs.h"
+#endif
 
 #endif /* __UAPI_CAM_DEFS_H__ */

@@ -119,6 +119,10 @@ struct sde_plane_state {
 	bool const_alpha_en;
 	bool pending;
 	bool defer_prepare_fb;
+#ifdef OPLUS_BUG_STABILITY
+	/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-01-12 add is_skip check */
+	bool is_skip;
+#endif /* OPLUS_BUG_STABILITY */
 	uint32_t pipe_order_flags;
 	int layout_offset;
 	enum sde_layout layout;
@@ -196,6 +200,15 @@ void sde_plane_ctl_flush(struct drm_plane *plane, struct sde_hw_ctl *ctl,
 void sde_plane_restore(struct drm_plane *plane);
 
 /**
+ * _sde_plane_set_qos_lut - set danger, safe and creq LUT of the given plane
+ * @plane:		Pointer to drm plane
+ * @crtc:		Pointer to drm crtc to find refresh rate on mode
+ * @fb:			Pointer to framebuffer associated with the given plane
+ */
+void _sde_plane_set_qos_lut(struct drm_plane *plane,
+		struct drm_crtc *crtc,
+		struct drm_framebuffer *fb);
+/**
  * sde_plane_flush - final plane operations before commit flush
  * @plane: Pointer to drm plane structure
  */
@@ -243,6 +256,13 @@ int sde_plane_validate_multirect_v2(struct sde_multirect_plane_states *plane);
  * @drm_state: Pointer to DRM plane state
  */
 void sde_plane_clear_multirect(const struct drm_plane_state *drm_state);
+
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.Service.Feature,2018/11/21
+ * For OnScreenFingerprint feature
+*/
+int sde_plane_check_fingerprint_layer(const struct drm_plane_state *drm_state);
+#endif
 
 /**
  * sde_plane_validate_src_addr - validate if current sspp addr of given

@@ -9,6 +9,9 @@
 #include "cam_sensor_core.h"
 #include "camera_main.h"
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_sensor_core.h"
+#endif
 static long cam_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 	unsigned int cmd, void *arg)
 {
@@ -23,6 +26,15 @@ static long cam_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 			CAM_ERR(CAM_SENSOR,
 				"Failed in Driver cmd: %d", rc);
 		break;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/* Add for AT camera test */
+	case VIDIOC_CAM_FTM_POWNER_DOWN:
+		rc = cam_ftm_power_down(s_ctrl);
+		break;
+	case VIDIOC_CAM_FTM_POWNER_UP:
+		rc = cam_ftm_power_up(s_ctrl);
+		break;
+#endif
 	default:
 		CAM_ERR(CAM_SENSOR, "Invalid ioctl cmd: %d", cmd);
 		rc = -ENOIOCTLCMD;
@@ -43,7 +55,12 @@ static int cam_sensor_subdev_close(struct v4l2_subdev *sd,
 	}
 
 	mutex_lock(&(s_ctrl->cam_sensor_mutex));
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if(!cam_ftm_if_do())
+		cam_sensor_shutdown(s_ctrl);
+#else
 	cam_sensor_shutdown(s_ctrl);
+#endif
 	mutex_unlock(&(s_ctrl->cam_sensor_mutex));
 
 	return 0;

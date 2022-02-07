@@ -8,7 +8,12 @@
 
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*lixin@Camera.Drv, 2020/7/27, modify for fix camx/src/core can't include kernel head file*/
+#include <media/cam_defs.h>
+#else
 #include <camera/media/cam_defs.h>
+#endif
 
 #define CAM_SENSOR_PROBE_CMD   (CAM_COMMON_OPCODE_MAX + 1)
 #define CAM_FLASH_MAX_LED_TRIGGERS 2
@@ -485,4 +490,8 @@ struct cam_flash_query_cap_info {
 	__u32    max_current_torch[CAM_FLASH_MAX_LED_TRIGGERS];
 } __attribute__ ((packed));
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*lixin@Camera.Drv, 2020/05/25, modify for camera kernel decoupling*/
+	#include "oplus/media/oplus_cam_sensor.h"
+#endif
 #endif

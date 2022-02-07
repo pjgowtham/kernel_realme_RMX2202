@@ -36,6 +36,13 @@
 #include "sde_vbif.h"
 #include "sde_plane.h"
 #include "sde_color_processing.h"
+#ifdef OPLUS_BUG_STABILITY
+/* QianXu@MM.Display.LCD.Stability, 2020/3/31, for decoupling display driver */
+#include "oplus_display_private_api.h"
+#endif
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+#include "iris/dsi_iris5_api.h"
+#endif
 
 #define SDE_DEBUG_PLANE(pl, fmt, ...) SDE_DEBUG("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -122,9 +129,6 @@ struct sde_plane {
 	struct sde_csc_cfg csc_cfg;
 	struct sde_csc_cfg *csc_usr_ptr;
 	struct sde_csc_cfg *csc_ptr;
-
-	struct sde_hw_scaler3_cfg scaler3_cfg;
-	struct sde_hw_pixel_ext pixel_ext;
 
 	const struct sde_sspp_sub_blks *pipe_sblk;
 
@@ -257,7 +261,7 @@ void sde_plane_set_sid(struct drm_plane *plane, u32 vm)
 	sde_hw_set_sspp_sid(sde_kms->hw_sid, psde->pipe, vm);
 }
 
-static void _sde_plane_set_qos_lut(struct drm_plane *plane,
+void _sde_plane_set_qos_lut(struct drm_plane *plane,
 		struct drm_crtc *crtc,
 		struct drm_framebuffer *fb)
 {
@@ -300,11 +304,11 @@ static void _sde_plane_set_qos_lut(struct drm_plane *plane,
 				fb->modifier);
 
 		if (fmt && SDE_FORMAT_IS_LINEAR(fmt) &&
-		    psde->scaler3_cfg.enable)
+		    pstate->scaler3_cfg.enable)
 			lut_index = SDE_QOS_LUT_USAGE_LINEAR_QSEED;
 		else if (fmt && SDE_FORMAT_IS_LINEAR(fmt))
 			lut_index = SDE_QOS_LUT_USAGE_LINEAR;
-		else if (psde->scaler3_cfg.enable)
+		else if (pstate->scaler3_cfg.enable)
 			lut_index = SDE_QOS_LUT_USAGE_MACROTILE_QSEED;
 		else
 			lut_index = SDE_QOS_LUT_USAGE_MACROTILE;
@@ -797,7 +801,7 @@ static int _sde_plane_setup_scaler3_lut(struct sde_plane *psde,
 		return -EINVAL;
 	}
 
-	cfg = &psde->scaler3_cfg;
+	cfg = &pstate->scaler3_cfg;
 
 	cfg->dir_lut = msm_property_get_blob(
 			&psde->property_info,
@@ -821,7 +825,7 @@ static int _sde_plane_setup_scaler3lite_lut(struct sde_plane *psde,
 {
 	struct sde_hw_scaler3_cfg *cfg;
 
-	cfg = &psde->scaler3_cfg;
+	cfg = &pstate->scaler3_cfg;
 
 	cfg->sep_lut = msm_property_get_blob(
 			&psde->property_info,
@@ -846,14 +850,14 @@ static void _sde_plane_setup_scaler3(struct sde_plane *psde,
 		return;
 	}
 
-	scale_cfg = &psde->scaler3_cfg;
+	scale_cfg = &pstate->scaler3_cfg;
 	src_w = psde->pipe_cfg.src_rect.w;
 	src_h = psde->pipe_cfg.src_rect.h;
 	dst_w = psde->pipe_cfg.dst_rect.w;
 	dst_h = psde->pipe_cfg.dst_rect.h;
 
 	memset(scale_cfg, 0, sizeof(*scale_cfg));
-	memset(&psde->pixel_ext, 0, sizeof(struct sde_hw_pixel_ext));
+	memset(&pstate->pixel_ext, 0, sizeof(struct sde_hw_pixel_ext));
 
 	/*
 	 * For inline rotation cases, scaler config is post-rotation,
@@ -915,14 +919,14 @@ static void _sde_plane_setup_scaler3(struct sde_plane *psde,
 
 		/* For pixel extension we need the pre-rotated orientation */
 		if (inline_rotation) {
-			psde->pixel_ext.num_ext_pxls_top[i] =
+			pstate->pixel_ext.num_ext_pxls_top[i] =
 				scale_cfg->src_width[i];
-			psde->pixel_ext.num_ext_pxls_left[i] =
+			pstate->pixel_ext.num_ext_pxls_left[i] =
 				scale_cfg->src_height[i];
 		} else {
-			psde->pixel_ext.num_ext_pxls_top[i] =
+			pstate->pixel_ext.num_ext_pxls_top[i] =
 				scale_cfg->src_height[i];
-			psde->pixel_ext.num_ext_pxls_left[i] =
+			pstate->pixel_ext.num_ext_pxls_left[i] =
 				scale_cfg->src_width[i];
 		}
 	}
@@ -1141,6 +1145,9 @@ static inline void _sde_plane_setup_csc(struct sde_plane *psde)
 	else
 		psde->csc_ptr = (struct sde_csc_cfg *)&sde_csc_YUV2RGB_601L;
 
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	iris_sde_plane_setup_csc(psde->csc_ptr);
+#endif
 	SDE_DEBUG_PLANE(psde, "using 0x%X 0x%X 0x%X...\n",
 			psde->csc_ptr->csc_mv[0],
 			psde->csc_ptr->csc_mv[1],
@@ -1274,13 +1281,8 @@ static void _sde_plane_setup_scaler(struct sde_plane *psde,
 		return;
 	}
 
-	memcpy(&psde->scaler3_cfg, &pstate->scaler3_cfg,
-			sizeof(psde->scaler3_cfg));
-	memcpy(&psde->pixel_ext, &pstate->pixel_ext,
-			sizeof(psde->pixel_ext));
-
 	info = drm_format_info(fmt->base.pixel_format);
-	pe = &psde->pixel_ext;
+	pe = &pstate->pixel_ext;
 
 	psde->pipe_cfg.horz_decimation =
 		sde_plane_get_property(pstate, PLANE_PROP_H_DECIMATE);
@@ -1449,13 +1451,13 @@ static int _sde_plane_color_fill(struct sde_plane *psde,
 
 		if (psde->pipe_hw->ops.setup_pe)
 			psde->pipe_hw->ops.setup_pe(psde->pipe_hw,
-					&psde->pixel_ext);
+					&pstate->pixel_ext);
 		if (psde->pipe_hw->ops.setup_scaler &&
 				pstate->multirect_index != SDE_SSPP_RECT_1) {
 			psde->pipe_hw->ctl = _sde_plane_get_hw_ctl(plane);
 			psde->pipe_hw->ops.setup_scaler(psde->pipe_hw,
-					&psde->pipe_cfg, &psde->pixel_ext,
-					&psde->scaler3_cfg);
+					&psde->pipe_cfg, &pstate->pixel_ext,
+					&pstate->scaler3_cfg);
 		}
 	}
 
@@ -2826,6 +2828,12 @@ static void _sde_plane_map_prop_to_dirty_bits(void)
 	/* no special action required */
 	plane_prop_array[PLANE_PROP_INFO] =
 	plane_prop_array[PLANE_PROP_ALPHA] =
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Support custom property
+*/
+	plane_prop_array[PLANE_PROP_CUSTOM] =
+#endif /* OPLUS_BUG_STABILITY */
 	plane_prop_array[PLANE_PROP_INPUT_FENCE] =
 	plane_prop_array[PLANE_PROP_BLEND_OP] = 0;
 
@@ -3010,7 +3018,7 @@ static void _sde_plane_update_roi_config(struct drm_plane *plane,
 	if (psde->pipe_hw->ops.setup_pe &&
 			(pstate->multirect_index != SDE_SSPP_RECT_1))
 		psde->pipe_hw->ops.setup_pe(psde->pipe_hw,
-				&psde->pixel_ext);
+				&pstate->pixel_ext);
 
 	/**
 	 * when programmed in multirect mode, scalar block will be
@@ -3021,8 +3029,8 @@ static void _sde_plane_update_roi_config(struct drm_plane *plane,
 			pstate->multirect_index != SDE_SSPP_RECT_1) {
 		psde->pipe_hw->ctl = _sde_plane_get_hw_ctl(plane);
 		psde->pipe_hw->ops.setup_scaler(psde->pipe_hw,
-				&psde->pipe_cfg, &psde->pixel_ext,
-				&psde->scaler3_cfg);
+				&psde->pipe_cfg, &pstate->pixel_ext,
+				&pstate->scaler3_cfg);
 	}
 
 	/* update excl rect */
@@ -3098,6 +3106,11 @@ static void _sde_plane_update_format_and_rects(struct sde_plane *psde,
 	if (psde->pipe_hw->ops.setup_dgm_csc)
 		psde->pipe_hw->ops.setup_dgm_csc(psde->pipe_hw,
 			pstate->multirect_index, psde->csc_usr_ptr);
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	if (psde->pipe_hw->ops.setup_csc_v2)
+		psde->pipe_hw->ops.setup_csc_v2(psde->pipe_hw,
+			fmt, psde->csc_usr_ptr);
+#endif
 }
 
 static void _sde_plane_update_sharpening(struct sde_plane *psde)
@@ -3267,7 +3280,7 @@ static int sde_plane_sspp_atomic_update(struct drm_plane *plane,
 	_sde_plane_set_scanout(plane, pstate, &psde->pipe_cfg, fb);
 
 	is_rt = sde_crtc_is_rt_client(crtc, crtc->state);
-	if (is_rt != psde->is_rt_pipe || crtc->state->mode_changed) {
+	if (is_rt != psde->is_rt_pipe) {
 		psde->is_rt_pipe = is_rt;
 		pstate->dirty |= SDE_PLANE_DIRTY_QOS;
 	}
@@ -3708,6 +3721,14 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 	msm_property_install_range(&psde->property_info, "zpos",
 		0x0, 0, zpos_max, zpos_def, PLANE_PROP_ZPOS);
 
+
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Support custom propertys
+*/
+	msm_property_install_range(&psde->property_info,"PLANE_CUST",
+		0x0, 0, INT_MAX, 0, PLANE_PROP_CUSTOM);
+#endif
 	msm_property_install_range(&psde->property_info, "alpha",
 		0x0, 0, 255, 255, PLANE_PROP_ALPHA);
 

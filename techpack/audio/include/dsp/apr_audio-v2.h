@@ -895,6 +895,32 @@ struct audproc_volume_ctrl_master_gain {
 	uint16_t                  reserved;
 } __packed;
 
+#ifdef OPLUS_FEATURE_KTV
+// QinZhichao@MULTIMEDIA.AudioDriver.KTV, 2020/03/30, Add for ktv2.0
+struct audproc_revert_param {
+	int32_t mode;
+	int32_t volume;
+	int32_t peg;
+	int32_t pitchange;
+	int32_t reverbparam;
+	int32_t enabled;
+	int32_t reverved0;
+	int32_t reverved1;
+	int32_t reverved2;
+	int32_t reverved3;
+	int32_t reverved4;
+	int32_t reverved5;
+	int32_t reverved6;
+	int32_t reverved7;
+	int32_t reverved8;
+	int32_t reverved9;
+	int32_t reverved10;
+	int32_t reverved11;
+	int32_t reverved12;
+	int32_t reverved13;
+} __packed;
+#endif /* OPLUS_FEATURE_KTV */
+
 struct audproc_soft_step_volume_params {
 /*
  * Period in milliseconds.
@@ -1358,7 +1384,6 @@ struct adm_cmd_connect_afe_port_v5 {
 #define INT_FM_TX 0x3005
 #define RT_PROXY_PORT_001_RX	0x2000
 #define RT_PROXY_PORT_001_TX	0x2001
-#define RT_PROXY_PORT_002_RX	0x2002
 #define AFE_LOOPBACK_TX	0x6001
 #define HDMI_RX_MS			0x6002
 #define DISPLAY_PORT_RX	0x6020
@@ -1522,7 +1547,6 @@ struct adm_cmd_connect_afe_port_v5 {
 
 #define  AFE_PORT_ID_RT_PROXY_PORT_001_RX   0x2000
 #define  AFE_PORT_ID_RT_PROXY_PORT_001_TX   0x2001
-#define  AFE_PORT_ID_RT_PROXY_PORT_002_RX   0x2002
 #define AFE_PORT_ID_INTERNAL_BT_SCO_RX      0x3000
 #define AFE_PORT_ID_INTERNAL_BT_SCO_TX      0x3001
 #define AFE_PORT_ID_INTERNAL_BT_A2DP_RX     0x3002

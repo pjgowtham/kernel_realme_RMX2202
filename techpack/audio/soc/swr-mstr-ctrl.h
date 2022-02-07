@@ -51,7 +51,6 @@ enum {
 	SWR_MSTR_UP,
 	SWR_MSTR_DOWN,
 	SWR_MSTR_SSR,
-	SWR_MSTR_SSR_RESET,
 };
 
 enum swrm_pm_state {
@@ -198,6 +197,10 @@ struct swr_mstr_ctrl {
 	u64 phy_dev[SWRM_NUM_AUTO_ENUM_SLAVES + 1];
 	bool use_custom_phy_addr;
 	u32 is_always_on;
+	#ifdef OPLUS_BUG_STABILITY
+	/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.CODEC, 2021/02/23, Add for fix headset detect issue. Case#04977196-CR#2848485*/
+	bool clk_stop_wakeup;
+	#endif /* #ifdef OPLUS_BUG_STABILITY */
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs_swrm_dent;
 	struct dentry *debugfs_peek;

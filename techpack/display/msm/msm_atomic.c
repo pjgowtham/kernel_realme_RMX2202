@@ -16,6 +16,11 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <drm/drm_panel.h>
+#ifdef OPLUS_BUG_STABILITY
+/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-09-12 use oppo custon notify */
+#include <linux/msm_drm_notify.h>
+#include <linux/notifier.h>
+#endif /* OPLUS_BUG_STABILITY */
 
 #include "msm_drv.h"
 #include "msm_gem.h"
@@ -156,6 +161,7 @@ msm_disable_outputs(struct drm_device *dev, struct drm_atomic_state *old_state)
 			old_conn_state, i) {
 		const struct drm_encoder_helper_funcs *funcs;
 		struct drm_encoder *encoder;
+		struct drm_crtc_state *old_crtc_state;
 
 		/*
 		 * Shut down everything that's in the changeset and currently

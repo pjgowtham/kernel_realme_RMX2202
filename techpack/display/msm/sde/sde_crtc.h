@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -259,7 +259,8 @@ struct sde_crtc_misr_info {
  * @frame_pending : Whether or not an update is pending
  * @frame_events  : static allocation of in-flight frame events
  * @frame_event_list : available frame event list
- * @spin_lock     : spin lock for frame event, transaction status, etc...
+ * @spin_lock     : spin lock for transaction status, etc...
+ * @fevent_spin_lock     : spin lock for frame event
  * @event_thread  : Pointer to event handler thread
  * @event_worker  : Event worker queue
  * @event_cache   : Local cache of event worker structures
@@ -286,12 +287,12 @@ struct sde_crtc_misr_info {
  * @ltm_buffer_lock : muttx to protect ltm_buffers allcation and free
  * @ltm_lock        : Spinlock to protect ltm buffer_cnt, hist_en and ltm lists
  * @needs_hw_reset  : Initiate a hw ctl reset
+ * @hist_irq_idx	: hist interrupt irq idx
  * @src_bpp         : source bpp used to calculate compression ratio
  * @target_bpp      : target bpp used to calculate compression ratio
  * @static_cache_read_work: delayed worker to transition cache state to read
  * @cache_state     : Current static image cache state
  * @dspp_blob_info  : blob containing dspp hw capability information
- * @cached_encoder_mask : cached encoder_mask for vblank work
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -341,6 +342,7 @@ struct sde_crtc {
 	struct sde_crtc_frame_event frame_events[SDE_CRTC_FRAME_EVENT_SIZE];
 	struct list_head frame_event_list;
 	spinlock_t spin_lock;
+	spinlock_t fevent_spin_lock;
 
 	/* for handling internal event thread */
 	struct sde_crtc_event event_cache[SDE_CRTC_MAX_EVENT_COUNT];
@@ -374,6 +376,7 @@ struct sde_crtc {
 	struct mutex ltm_buffer_lock;
 	spinlock_t ltm_lock;
 	bool needs_hw_reset;
+	int hist_irq_idx;
 
 	int src_bpp;
 	int target_bpp;
@@ -382,7 +385,6 @@ struct sde_crtc {
 	enum sde_crtc_cache_state cache_state;
 
 	struct drm_property_blob *dspp_blob_info;
-	u32 cached_encoder_mask;
 };
 
 enum sde_crtc_dirty_flags {
@@ -449,6 +451,16 @@ struct sde_crtc_state {
 	struct sde_hw_scaler3_lut_cfg scl3_lut_cfg;
 
 	struct sde_core_perf_params new_perf;
+#ifdef OPLUS_BUG_STABILITY
+/* Gou shengjun@PSW.MM.Display.Service.Feature,2018/11/21
+ * For OnScreenFingerprint feature
+*/
+	bool fingerprint_mode;
+	bool fingerprint_pressed;
+	bool fingerprint_defer_sync;
+	struct sde_hw_dim_layer *fingerprint_dim_layer;
+	bool aod_skip_pcc;
+#endif
 };
 
 enum sde_crtc_irq_state {
@@ -882,6 +894,11 @@ void sde_crtc_misr_setup(struct drm_crtc *crtc, bool enable, u32 frame_count);
 void sde_crtc_get_misr_info(struct drm_crtc *crtc,
 		struct sde_crtc_misr_info *crtc_misr_info);
 
+#ifdef OPLUS_BUG_STABILITY
+/* QianXu@MM.Display.LCD.Stability, 2020/3/31, for decoupling display driver */
+struct sde_kms *_sde_crtc_get_kms_(struct drm_crtc *crtc);
+#endif
+
 /**
  * sde_crtc_set_bpp - set src and target bpp values
  * @sde_crtc: Pointer to sde crtc struct
@@ -918,12 +935,5 @@ void sde_crtc_static_cache_read_kickoff(struct drm_crtc *crtc);
  */
 int sde_crtc_get_num_datapath(struct drm_crtc *crtc,
 		struct drm_connector *connector);
-
-/**
- * sde_crtc_reset_sw_state - reset dirty proerties on crtc and
- *				planes attached to the crtc
- * @crtc: Pointer to DRM crtc object
- */
-void sde_crtc_reset_sw_state(struct drm_crtc *crtc);
 
 #endif /* _SDE_CRTC_H_ */

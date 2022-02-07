@@ -131,6 +131,8 @@ static void ipa_dec_clients_disable_clks_on_wq(struct work_struct *work);
 static DECLARE_DELAYED_WORK(ipa_dec_clients_disable_clks_on_wq_work,
 	ipa_dec_clients_disable_clks_on_wq);
 
+static DECLARE_DELAYED_WORK(ipa_dec_clients_disable_clks_on_suspend_irq_wq_work,
+	ipa_dec_clients_disable_clks_on_wq);
 static void ipa_inc_clients_enable_clks_on_wq(struct work_struct *work);
 static DECLARE_WORK(ipa_inc_clients_enable_clks_on_wq_work,
 	ipa_inc_clients_enable_clks_on_wq);
@@ -5528,7 +5530,22 @@ void ipa3_dec_client_disable_clks_no_block(
 	queue_delayed_work(ipa3_ctx->power_mgmt_wq,
 		&ipa_dec_clients_disable_clks_on_wq_work, 0);
 }
+/**
+ * ipa3_dec_client_disable_clks_delay_wq() - Decrease active clients counter
+ * in delayed workqueue.
+ *
+ * Return codes:
+ * None
+ */
+void ipa3_dec_client_disable_clks_delay_wq(
+	struct ipa_active_client_logging_info *id, unsigned long delay)
+{
+	ipa3_active_clients_log_dec(id, true);
 
+	if (!queue_delayed_work(ipa3_ctx->power_mgmt_wq,
+	&ipa_dec_clients_disable_clks_on_suspend_irq_wq_work, delay))
+	IPAERR("Scheduling delayed work failed\n");
+}
 /**
  * ipa3_inc_acquire_wakelock() - Increase active clients counter, and
  * acquire wakelock if necessary
@@ -6593,6 +6610,7 @@ static void ipa3_load_ipa_fw(struct work_struct *work)
 	if (result) {
 		IPAERR("IPA FW loading process has failed result=%d\n",
 			result);
+		ipa_assert();
 		return;
 	}
 	mutex_lock(&ipa3_ctx->fw_load_data.lock);
@@ -6995,6 +7013,7 @@ static int ipa3_pre_init(const struct ipa3_plat_drv_res *resource_p,
 	ipa3_ctx->ipa_wrapper_size = resource_p->ipa_mem_size;
 	ipa3_ctx->ipa_hw_type = resource_p->ipa_hw_type;
 	ipa3_ctx->ipa_config_is_mhi = resource_p->ipa_mhi_dynamic_config;
+	ipa3_ctx->hw_type_index = ipa3_get_hw_type_index();
 	ipa3_ctx->ipa3_hw_mode = resource_p->ipa3_hw_mode;
 	ipa3_ctx->platform_type = resource_p->platform_type;
 	ipa3_ctx->use_ipa_teth_bridge = resource_p->use_ipa_teth_bridge;
@@ -7051,7 +7070,6 @@ static int ipa3_pre_init(const struct ipa3_plat_drv_res *resource_p,
 	ipa3_ctx->ipa_config_is_auto = resource_p->ipa_config_is_auto;
 	ipa3_ctx->manual_fw_load = resource_p->manual_fw_load;
 	ipa3_ctx->max_num_smmu_cb = resource_p->max_num_smmu_cb;
-	ipa3_ctx->hw_type_index = ipa3_get_hw_type_index();
 
 	if (resource_p->gsi_fw_file_name) {
 		ipa3_ctx->gsi_fw_file_name =

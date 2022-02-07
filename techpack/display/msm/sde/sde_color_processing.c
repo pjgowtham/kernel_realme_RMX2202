@@ -18,6 +18,11 @@
 #include "sde_core_irq.h"
 #include "dsi_panel.h"
 #include "sde_hw_color_proc_common_v4.h"
+#ifdef OPLUS_BUG_STABILITY
+/* QianXu@MM.Display.LCD.Stability, 2020/3/31, for decoupling display driver */
+#include "oplus_display_private_api.h"
+#include "oplus_onscreenfingerprint.h"
+#endif
 
 struct sde_cp_node {
 	u32 property_id;
@@ -286,11 +291,41 @@ static int set_dspp_pcc_feature(struct sde_hw_dspp *hw_dspp,
 				struct sde_crtc *hw_crtc)
 {
 	int ret = 0;
+#ifdef OPLUS_BUG_STABILITY
+/*LiPing-M@PSW.MM.Display.LCD.Stable,2021-02-24 fix pcc abnormal on onscreenfinger scene */
+	struct sde_crtc_state *cstate;
+	struct drm_msm_pcc *save_pcc;
+
+	if (!hw_cfg) {
+		return -EINVAL;
+	}
+
+	save_pcc = hw_cfg->payload;
+	cstate = to_sde_crtc_state(hw_crtc->base.state);
+
+	if (!cstate) {
+		DRM_ERROR("set_dspp_pcc_feature invalid cstate %pK\n", cstate);
+		return -EINVAL;
+	}
+
+	if (OPLUS_DISPLAY_POWER_DOZE_SUSPEND == get_oplus_display_power_status() ||
+			OPLUS_DISPLAY_POWER_DOZE == get_oplus_display_power_status() ||
+			(cstate->aod_skip_pcc == true) ||
+			cstate->fingerprint_mode) {
+		hw_cfg->payload = NULL;
+	}
+#endif
 
 	if (!hw_dspp || !hw_dspp->ops.setup_pcc)
 		ret = -EINVAL;
 	else
 		hw_dspp->ops.setup_pcc(hw_dspp, hw_cfg);
+
+#ifdef OPLUS_BUG_STABILITY
+/*LiPing-M@PSW.MM.Display.LCD.Stable,2021-02-24 fix pcc abnormal on onscreenfinger scene */
+	hw_cfg->payload = save_pcc;
+#endif
+
 	return ret;
 }
 
@@ -1188,6 +1223,15 @@ static int sde_cp_enable_crtc_property(struct drm_crtc *crtc,
 }
 
 
+#ifdef OPLUS_BUG_STABILITY
+/* QianXu@MM.Display.LCD.Stability, 2020/3/31, for decoupling display driver */
+struct sde_kms *get_kms_(struct drm_crtc *crtc)
+{
+	return get_kms(crtc);
+}
+EXPORT_SYMBOL(get_kms_);
+#endif
+
 static void sde_cp_crtc_prop_attach(struct sde_cp_prop_attach *prop_attach)
 {
 
@@ -1435,7 +1479,7 @@ static void _sde_cp_crtc_enable_hist_irq(struct sde_crtc *sde_crtc)
 	struct sde_hw_dspp *hw_dspp = NULL;
 	struct sde_crtc_irq_info *node = NULL;
 	int i, irq_idx, ret = 0;
-	unsigned long flags;
+	unsigned long flags, state_flags;
 
 	if (!crtc_drm) {
 		DRM_ERROR("invalid crtc %pK\n", crtc_drm);
@@ -1465,12 +1509,13 @@ static void _sde_cp_crtc_enable_hist_irq(struct sde_crtc *sde_crtc)
 
 	spin_lock_irqsave(&sde_crtc->spin_lock, flags);
 	node = _sde_cp_get_intr_node(DRM_EVENT_HISTOGRAM, sde_crtc);
-	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
 
-	if (!node)
+	if (!node) {
+		spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
 		return;
+	}
 
-	spin_lock_irqsave(&node->state_lock, flags);
+	spin_lock_irqsave(&node->state_lock, state_flags);
 	if (node->state == IRQ_DISABLED) {
 		ret = sde_core_irq_enable(kms, &irq_idx, 1);
 		if (ret)
@@ -1478,7 +1523,8 @@ static void _sde_cp_crtc_enable_hist_irq(struct sde_crtc *sde_crtc)
 		else
 			node->state = IRQ_ENABLED;
 	}
-	spin_unlock_irqrestore(&node->state_lock, flags);
+	spin_unlock_irqrestore(&node->state_lock, state_flags);
+	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
 }
 
 static int sde_cp_crtc_checkfeature(struct sde_cp_node *prop_node,
@@ -1556,6 +1602,7 @@ static void sde_cp_crtc_setfeature(struct sde_cp_node *prop_node,
 
 	memset(&hw_cfg, 0, sizeof(hw_cfg));
 	sde_cp_get_hw_payload(prop_node, &hw_cfg, &feature_enabled);
+
 	hw_cfg.num_of_mixers = sde_crtc->num_mixers;
 	hw_cfg.last_feature = 0;
 
@@ -2305,6 +2352,7 @@ void sde_cp_crtc_destroy_properties(struct drm_crtc *crtc)
 	}
 	sde_crtc->ltm_buffer_cnt = 0;
 	sde_crtc->ltm_hist_en = false;
+	sde_crtc->hist_irq_idx = -1;
 
 	mutex_destroy(&sde_crtc->crtc_cp_lock);
 	INIT_LIST_HEAD(&sde_crtc->active_list);
@@ -2399,6 +2447,7 @@ void sde_cp_crtc_clear(struct drm_crtc *crtc)
 	}
 	sde_crtc->ltm_buffer_cnt = 0;
 	sde_crtc->ltm_hist_en = false;
+	sde_crtc->hist_irq_idx = -1;
 	INIT_LIST_HEAD(&sde_crtc->ltm_buf_free);
 	INIT_LIST_HEAD(&sde_crtc->ltm_buf_busy);
 }
@@ -3229,45 +3278,20 @@ static void sde_cp_hist_interrupt_cb(void *arg, int irq_idx)
 	struct sde_crtc *crtc = arg;
 	struct drm_crtc *crtc_drm = &crtc->base;
 	struct sde_hw_dspp *hw_dspp;
-	struct sde_kms *kms;
-	struct sde_crtc_irq_info *node = NULL;
+	u32 lock_hist = 1;
 	u32 i;
-	int ret = 0;
-	unsigned long flags;
-
-	/* disable histogram irq */
-	kms = get_kms(crtc_drm);
-	spin_lock_irqsave(&crtc->spin_lock, flags);
-	node = _sde_cp_get_intr_node(DRM_EVENT_HISTOGRAM, crtc);
-	spin_unlock_irqrestore(&crtc->spin_lock, flags);
-
-	if (!node) {
-		DRM_DEBUG_DRIVER("cannot find histogram event node in crtc\n");
-		return;
-	}
-
-	spin_lock_irqsave(&node->state_lock, flags);
-	if (node->state == IRQ_ENABLED) {
-		if (sde_core_irq_disable_nolock(kms, irq_idx)) {
-			DRM_ERROR("failed to disable irq %d, ret %d\n",
-				irq_idx, ret);
-			spin_unlock_irqrestore(&node->state_lock, flags);
-			return;
-		}
-		node->state = IRQ_DISABLED;
-	}
-	spin_unlock_irqrestore(&node->state_lock, flags);
 
 	/* lock histogram buffer */
 	for (i = 0; i < crtc->num_mixers; i++) {
 		hw_dspp = crtc->mixers[i].hw_dspp;
 		if (hw_dspp && hw_dspp->ops.lock_histogram)
-			hw_dspp->ops.lock_histogram(hw_dspp, NULL);
+			hw_dspp->ops.lock_histogram(hw_dspp, &lock_hist);
 	}
+	crtc->hist_irq_idx = irq_idx;
 
 	/* notify histogram event */
 	sde_crtc_event_queue(crtc_drm, sde_cp_notify_hist_event,
-							NULL, true);
+							&crtc->hist_irq_idx, true);
 }
 
 static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
@@ -3277,11 +3301,13 @@ static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
 	struct drm_event event;
 	struct drm_msm_hist *hist_data;
 	struct sde_kms *kms;
-	int ret;
-	u32 i;
+	struct sde_crtc_irq_info *node = NULL;
+	unsigned long flags, state_flags;
+	int ret, irq_idx;
+	u32 i, lock_hist = 0;
 
-	if (!crtc_drm) {
-		DRM_ERROR("invalid crtc %pK\n", crtc_drm);
+	if (!crtc_drm || !arg) {
+		DRM_ERROR("invalid drm crtc %pK or arg %pK\n", crtc_drm, arg);
 		return;
 	}
 
@@ -3291,14 +3317,69 @@ static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
 		return;
 	}
 
-	if (!crtc->hist_blob)
-		return;
-
 	kms = get_kms(crtc_drm);
 	if (!kms || !kms->dev) {
 		SDE_ERROR("invalid arg(s)\n");
 		return;
 	}
+
+	/* disable histogram irq */
+	spin_lock_irqsave(&crtc->spin_lock, flags);
+	node = _sde_cp_get_intr_node(DRM_EVENT_HISTOGRAM, crtc);
+
+	if (!node) {
+		spin_unlock_irqrestore(&crtc->spin_lock, flags);
+		DRM_DEBUG_DRIVER("cannot find histogram event node in crtc\n");
+		/* unlock histogram */
+		ret = pm_runtime_get_sync(kms->dev->dev);
+		if (ret < 0) {
+			SDE_ERROR("failed to enable power resource %d\n", ret);
+			SDE_EVT32(ret, SDE_EVTLOG_ERROR);
+			return;
+		}
+		for (i = 0; i < crtc->num_mixers; i++) {
+			hw_dspp = crtc->mixers[i].hw_dspp;
+			if (hw_dspp && hw_dspp->ops.lock_histogram)
+				hw_dspp->ops.lock_histogram(hw_dspp,
+					&lock_hist);
+		}
+		pm_runtime_put_sync(kms->dev->dev);
+		return;
+	}
+
+	irq_idx = *(int *)arg;
+	spin_lock_irqsave(&node->state_lock, state_flags);
+	if (node->state == IRQ_ENABLED) {
+		ret = sde_core_irq_disable_nolock(kms, irq_idx);
+		if (ret) {
+			DRM_ERROR("failed to disable irq %d, ret %d\n",
+				irq_idx, ret);
+			spin_unlock_irqrestore(&node->state_lock, state_flags);
+			spin_unlock_irqrestore(&crtc->spin_lock, flags);
+			ret = pm_runtime_get_sync(kms->dev->dev);
+			if (ret < 0) {
+				SDE_ERROR("failed to enable power %d\n", ret);
+				SDE_EVT32(ret, SDE_EVTLOG_ERROR);
+				return;
+			}
+
+			/* unlock histogram */
+			for (i = 0; i < crtc->num_mixers; i++) {
+				hw_dspp = crtc->mixers[i].hw_dspp;
+				if (hw_dspp && hw_dspp->ops.lock_histogram)
+					hw_dspp->ops.lock_histogram(hw_dspp,
+						&lock_hist);
+			}
+			pm_runtime_put_sync(kms->dev->dev);
+			return;
+		}
+		node->state = IRQ_DISABLED;
+	}
+	spin_unlock_irqrestore(&node->state_lock, state_flags);
+	spin_unlock_irqrestore(&crtc->spin_lock, flags);
+
+	if (!crtc->hist_blob)
+		return;
 
 	ret = pm_runtime_get_sync(kms->dev->dev);
 	if (ret < 0) {
@@ -4237,6 +4318,42 @@ static bool _sde_cp_feature_in_activelist(u32 feature, struct list_head *list)
 
 	return false;
 }
+
+#ifdef OPLUS_BUG_STABILITY
+/*LiPing-M@PSW.MM.Display.LCD.Stable,2021-02-08 fix pcc abnormal on onscreenfinger scene */
+void sde_cp_crtc_pcc_change(struct drm_crtc *crtc_drm)
+{
+	struct sde_cp_node *prop_node = NULL;
+	struct sde_crtc *crtc;
+
+	if (!crtc_drm) {
+		DRM_ERROR("invalid crtc handle");
+		return;
+	}
+	crtc = to_sde_crtc(crtc_drm);
+	mutex_lock(&crtc->crtc_cp_lock);
+	list_for_each_entry(prop_node, &crtc->feature_list, feature_list) {
+		if (prop_node->feature != SDE_CP_CRTC_DSPP_PCC)
+			continue;
+
+		if (_sde_cp_feature_in_dirtylist(prop_node->feature,
+						 &crtc->dirty_list))
+			continue;
+
+		if (_sde_cp_feature_in_activelist(prop_node->feature,
+						 &crtc->active_list)) {
+			sde_cp_update_list(prop_node, crtc, true);
+			list_del_init(&prop_node->active_list);
+			continue;
+		}
+
+		pr_err("oplus_pcc: %s %d prop_node->feature=%d\n", __func__, __LINE__, SDE_CP_CRTC_DSPP_PCC);
+		sde_cp_update_list(prop_node, crtc, true);
+	}
+
+	mutex_unlock(&crtc->crtc_cp_lock);
+}
+#endif
 
 void sde_cp_crtc_vm_primary_handoff(struct drm_crtc *crtc)
 {

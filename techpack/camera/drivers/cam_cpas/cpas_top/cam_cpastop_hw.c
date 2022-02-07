@@ -30,7 +30,6 @@
 #include "cpastop_v545_100.h"
 #include "cpastop_v570_200.h"
 #include "cpastop_v680_100.h"
-#include "cpastop_v165_100.h"
 #include "cam_req_mgr_workq.h"
 
 struct cam_camnoc_info *camnoc_info;
@@ -131,15 +130,6 @@ static const uint32_t cam_cpas_hw_version_map
 		0,
 		CAM_CPAS_TITAN_570_V200,
 	},
-	/* for camera_165 */
-	{
-		CAM_CPAS_TITAN_165_V100,
-		0,
-		0,
-		0,
-		0,
-		0,
-	},
 };
 
 static int cam_cpas_translate_camera_cpas_version_id(
@@ -189,10 +179,6 @@ static int cam_cpas_translate_camera_cpas_version_id(
 
 	case CAM_CPAS_CAMERA_VERSION_680:
 		*cam_version_id = CAM_CPAS_CAMERA_VERSION_ID_680;
-		break;
-
-	case CAM_CPAS_CAMERA_VERSION_165:
-		*cam_version_id = CAM_CPAS_CAMERA_VERSION_ID_165;
 		break;
 
 	default:
@@ -697,40 +683,6 @@ done:
 	return IRQ_HANDLED;
 }
 
-static int cam_cpastop_print_poweron_settings(struct cam_hw_info *cpas_hw)
-{
-	int i;
-
-	for (i = 0; i < camnoc_info->specific_size; i++) {
-		if (camnoc_info->specific[i].enable) {
-			CAM_INFO(CAM_CPAS, "Reading QoS settings for %d",
-				camnoc_info->specific[i].port_type);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].priority_lut_low);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].priority_lut_high);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].urgency);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].danger_lut);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].safe_lut);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].ubwc_ctl);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].flag_out_set0_low);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].qosgen_mainctl);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].qosgen_shaping_low);
-			cam_cpas_util_reg_read(cpas_hw, CAM_CPAS_REG_CAMNOC,
-				&camnoc_info->specific[i].qosgen_shaping_high);
-		}
-	}
-
-	return 0;
-}
-
 static int cam_cpastop_poweron(struct cam_hw_info *cpas_hw)
 {
 	int i;
@@ -871,9 +823,6 @@ static int cam_cpastop_init_hw_version(struct cam_hw_info *cpas_hw,
 	case CAM_CPAS_TITAN_680_V100:
 		camnoc_info = &cam680_cpas100_camnoc_info;
 		break;
-	case CAM_CPAS_TITAN_165_V100:
-		camnoc_info = &cam165_cpas100_camnoc_info;
-		break;
 	default:
 		CAM_ERR(CAM_CPAS, "Camera Version not supported %d.%d.%d",
 			hw_caps->camera_version.major,
@@ -950,8 +899,6 @@ int cam_cpastop_get_internal_ops(struct cam_cpas_internal_ops *internal_ops)
 	internal_ops->power_on = cam_cpastop_poweron;
 	internal_ops->power_off = cam_cpastop_poweroff;
 	internal_ops->setup_qos_settings = cam_cpastop_setup_qos_settings;
-	internal_ops->print_poweron_settings =
-		cam_cpastop_print_poweron_settings;
 
 	return 0;
 }

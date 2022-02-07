@@ -111,6 +111,10 @@ struct cam_sensor_ctrl_t {
 	bool bob_pwm_switch;
 	uint32_t last_flush_req;
 	uint16_t pipeline_delay;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	int is_support_laser;
+        int is_read_eeprom;
+#endif
 };
 
 /**

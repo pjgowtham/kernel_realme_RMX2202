@@ -34,7 +34,6 @@
 #define RT_PROXY_DAI_001_TX	0xF0
 #define RT_PROXY_DAI_002_RX	0xF1
 #define RT_PROXY_DAI_002_TX	0xE1
-#define RT_PROXY_DAI_003_RX	0xE2
 #define RT_PROXY_DAI_003_TX	0xF2
 #define VIRTUAL_ID_TO_PORTID(val) ((val & 0xF) | 0x2000)
 #define PORTID_TO_IDX(val)	((val & 0xF) >> 1)
@@ -535,7 +534,6 @@ int afe_get_doa_tracking_mon(u16 port_id,
 int afe_set_pll_clk_drift(u16 port_id, int32_t set_clk_drift,
 			  uint32_t clk_reset);
 int afe_set_clk_id(u16 port_id, uint32_t clk_id);
-void afe_set_lsm_afe_port_id(int idx, int lsm_port);
 
 enum {
 	AFE_LPASS_CORE_HW_BLOCK_ID_NONE,

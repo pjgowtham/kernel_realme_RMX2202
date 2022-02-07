@@ -50,7 +50,12 @@
 #define CCI_READ_MAX 256
 #define CCI_READ_MAX_V_1_2 0xE
 #define CCI_I2C_READ_MAX_RETRIES 3
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 #define CCI_I2C_MAX_READ 10240
+#else
+//add by lvchangfu@camera, 20191021 for read eeprom data
+#define CCI_I2C_MAX_READ 16384
+#endif
 #define CCI_I2C_MAX_WRITE 10240
 #define CCI_I2C_MAX_BYTE_COUNT 65535
 
@@ -132,8 +137,9 @@ struct cam_cci_master_info {
 	struct completion report_q[NUM_QUEUES];
 	atomic_t done_pending[NUM_QUEUES];
 	spinlock_t lock_q[NUM_QUEUES];
+	spinlock_t freq_cnt;
 	struct semaphore master_sem;
-	spinlock_t freq_cnt_lock;
+	bool is_first_req;
 	uint16_t freq_ref_cnt;
 	bool is_initilized;
 };

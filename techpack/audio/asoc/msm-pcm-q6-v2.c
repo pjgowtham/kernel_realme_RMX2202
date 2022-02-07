@@ -265,19 +265,12 @@ static void event_handler(uint32_t opcode,
 				break;
 			}
 			if (prtd->mmap_flag) {
-				int cnt = prtd->pcm_size / prtd->pcm_count;
-
-				pr_debug("%s %d:buffer %d, period %d, %d writes\n",
-					__func__, __LINE__,
-					prtd->pcm_size, prtd->pcm_count, cnt);
-				while (cnt--) {
-					pr_debug("%s %d:writing %d bytes of buffer to dsp\n",
-						__func__, __LINE__,
-						prtd->pcm_count);
-					q6asm_write_nolock(prtd->audio_client,
-						prtd->pcm_count,
-						0, 0, NO_TIMESTAMP);
-				}
+				pr_debug("%s:writing %d bytes of buffer to dsp\n",
+					__func__,
+					prtd->pcm_count);
+				q6asm_write_nolock(prtd->audio_client,
+					prtd->pcm_count,
+					0, 0, NO_TIMESTAMP);
 			} else {
 				while (atomic_read(&prtd->out_needed)) {
 					pr_debug("%s:writing %d bytes of buffer to dsp\n",
@@ -1017,7 +1010,15 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 		pr_debug("Offset value = %d\n", offset);
 		if (size == 0 || size < prtd->pcm_count) {
 			memset(bufptr + offset + size, 0, prtd->pcm_count - size);
+			#ifndef OPLUS_BUG_STABILITY
+			/*Jianfeng.Qiu@MULTIMEDIA.AUDIODRIVER.PLATFORM.658692, 2021/01/19, Modify for in_read memory corruption issue, case05024864*/
 			size = xfer = prtd->pcm_count;
+			#else /* OPLUS_BUG_STABILITY */
+			if (fbytes > prtd->pcm_count)
+				size = xfer = prtd->pcm_count;
+			else
+				size = xfer = fbytes;
+			#endif /* OPLUS_BUG_STABILITY */
 		}
 
 		if (copy_to_user(buf, bufptr+offset, xfer)) {
