@@ -1810,6 +1810,15 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 		return NULL;
 	}
 #endif
+
+#ifdef OPLUS_FEATURE_UFSPLUS
+//tianwen@BSP.Storage.UFS 2020/10/27, Add for UFS plus(kernel 5.4)
+#ifdef CONFIG_FS_HPB
+	if (inode && __is_hpb_file(dentry->d_name.name, inode))
+		ext4_set_inode_state(inode, EXT4_STATE_HPB);
+#endif
+#endif /* OPLUS_FEATURE_UFSPLUS */
+
 	return d_splice_alias(inode, dentry);
 }
 
@@ -2720,6 +2729,13 @@ retry:
 		err = ext4_add_nondir(handle, dentry, inode);
 		if (!err && IS_DIRSYNC(dir))
 			ext4_handle_sync(handle);
+#ifdef OPLUS_FEATURE_UFSPLUS
+//tianwen@BSP.Storage.UFS 2020/10/27, Add for UFS plus(kernel 5.4)
+#ifdef CONFIG_FS_HPB
+		if (__is_hpb_file(dentry->d_name.name, inode))
+			ext4_set_inode_state(inode, EXT4_STATE_HPB);
+#endif
+#endif /* OPLUS_FEATURE_UFSPLUS */
 	}
 	if (handle)
 		ext4_journal_stop(handle);
@@ -3783,6 +3799,12 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct inode *whiteout = NULL;
 	int credits;
 	u8 old_file_type;
+#ifdef OPLUS_FEATURE_UFSPLUS
+//tianwen@BSP.Storage.UFS 2020/10/27, Add for UFS plus(kernel 5.4)
+#ifdef CONFIG_FS_HPB
+	struct inode *hpb_inode;
+#endif
+#endif /* OPLUS_FEATURE_UFSPLUS */
 
 	if (new.inode && new.inode->i_nlink == 0) {
 		EXT4_ERROR_INODE(new.inode,
@@ -3924,6 +3946,17 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 		 */
 		ext4_rename_delete(handle, &old, force_reread);
 	}
+
+#ifdef OPLUS_FEATURE_UFSPLUS
+//tianwen@BSP.Storage.UFS 2020/10/27, Add for UFS plus(kernel 5.4)
+#ifdef CONFIG_FS_HPB
+	hpb_inode = (new.inode)? : old.inode;
+	if (__is_hpb_file(new_dentry->d_name.name, hpb_inode))
+		ext4_set_inode_state(hpb_inode, EXT4_STATE_HPB);
+	else
+		ext4_clear_inode_state(hpb_inode, EXT4_STATE_HPB);
+#endif
+#endif /* OPLUS_FEATURE_UFSPLUS */
 
 	if (new.inode) {
 		ext4_dec_count(handle, new.inode);
