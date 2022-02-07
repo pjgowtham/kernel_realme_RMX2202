@@ -110,7 +110,8 @@ struct ipa_fmwk_contex {
 	struct mutex lock;
 	ipa_uc_ready_cb uc_ready_cb;
 	void *uc_ready_priv;
-	struct ipa_eth_ready *eth_ready_info;
+	ipa_eth_ready_cb eth_ready_cb;
+	void *eth_userdata;
 	enum ipa_uc_offload_proto proto;
 
 	/* ipa core driver APIs */
@@ -240,11 +241,6 @@ struct ipa_fmwk_contex {
 
 	int (*ipa_wdi_dereg_intf)(const char *netdev_name);
 
-	int (*ipa_qdss_conn_pipes)(struct ipa_qdss_conn_in_params *in,
-		struct ipa_qdss_conn_out_params *out);
-
-	int (*ipa_qdss_disconn_pipes)(void);
-
 	int (*ipa_wdi_conn_pipes)(struct ipa_wdi_conn_in_params *in,
 		struct ipa_wdi_conn_out_params *out);
 
@@ -267,8 +263,6 @@ struct ipa_fmwk_contex {
 	int (*ipa_wdi_bw_monitor)(struct ipa_wdi_bw_info *info);
 
 	int (*ipa_wdi_sw_stats)(struct ipa_wdi_tx_info *info);
-
-	int (*ipa_get_wdi_version)(void);
 
 	/* ipa_gsb APIs*/
 	int (*ipa_bridge_init)(struct ipa_bridge_init_params *params, u32 *hdl);
@@ -423,10 +417,13 @@ static inline void ipa_late_register_ready_cb(void)
 		}
 	}
 
-	if (ipa_fmwk_ctx->eth_ready_info) {
+	if (ipa_fmwk_ctx->eth_ready_cb) {
+		struct ipa_eth_ready ready_info;
+
 		/* just late call to ipa_eth_register_ready_cb */
-		ipa_fmwk_ctx->ipa_eth_register_ready_cb(
-			ipa_fmwk_ctx->eth_ready_info);
+		ready_info.notify = ipa_fmwk_ctx->eth_ready_cb;
+		ready_info.userdata = ipa_fmwk_ctx->eth_userdata;
+		ipa_fmwk_ctx->ipa_eth_register_ready_cb(&ready_info);
 		/* nobody cares anymore about ready_info->is_eth_ready since
 		 * if we got here it means that we already returned false there
 		 */
@@ -1035,7 +1032,6 @@ int ipa_fmwk_register_ipa_wdi3(const struct ipa_wdi3_data *in)
 		|| ipa_fmwk_ctx->ipa_wdi_create_smmu_mapping
 		|| ipa_fmwk_ctx->ipa_wdi_release_smmu_mapping
 		|| ipa_fmwk_ctx->ipa_wdi_get_stats
-		|| ipa_fmwk_ctx->ipa_get_wdi_version
 		|| ipa_fmwk_ctx->ipa_wdi_sw_stats) {
 		pr_err("ipa_wdi3 APIs were already initialized\n");
 		return -EPERM;
@@ -1057,7 +1053,6 @@ int ipa_fmwk_register_ipa_wdi3(const struct ipa_wdi3_data *in)
 		in->ipa_wdi_release_smmu_mapping;
 	ipa_fmwk_ctx->ipa_wdi_get_stats = in->ipa_wdi_get_stats;
 	ipa_fmwk_ctx->ipa_wdi_sw_stats = in->ipa_wdi_sw_stats;
-	ipa_fmwk_ctx->ipa_get_wdi_version = in->ipa_get_wdi_version;
 
 	pr_info("ipa_wdi3 registered successfully\n");
 
@@ -1199,16 +1194,6 @@ int ipa_wdi_get_stats(struct IpaHwStatsWDIInfoData_t *stats)
 }
 EXPORT_SYMBOL(ipa_wdi_get_stats);
 
-int ipa_get_wdi_version(void)
-{
-	int ret;
-
-	IPA_FMWK_DISPATCH_RETURN(ipa_get_wdi_version);
-
-	return ret;
-}
-EXPORT_SYMBOL(ipa_get_wdi_version);
-
 int ipa_wdi_bw_monitor(struct ipa_wdi_bw_info *info)
 {
 	int ret;
@@ -1230,52 +1215,6 @@ int ipa_wdi_sw_stats(struct ipa_wdi_tx_info *info)
 	return ret;
 }
 EXPORT_SYMBOL(ipa_wdi_sw_stats);
-
-int ipa_qdss_conn_pipes(struct ipa_qdss_conn_in_params *in,
-	struct ipa_qdss_conn_out_params *out)
-{
-	int ret;
-
-	IPA_FMWK_DISPATCH_RETURN(ipa_qdss_conn_pipes,
-		in, out);
-
-	return ret;
-}
-EXPORT_SYMBOL(ipa_qdss_conn_pipes);
-
-int ipa_qdss_disconn_pipes(void)
-{
-	int ret;
-
-	IPA_FMWK_DISPATCH_RETURN(ipa_qdss_disconn_pipes);
-
-	return ret;
-}
-EXPORT_SYMBOL(ipa_qdss_disconn_pipes);
-
-/* registration API for IPA qdss module */
-int ipa_fmwk_register_ipa_qdss(const struct ipa_qdss_data *in)
-{
-	if (!ipa_fmwk_ctx) {
-		pr_err("ipa framework hasn't been initialized yet\n");
-		return -EPERM;
-	}
-
-	if (ipa_fmwk_ctx->ipa_qdss_conn_pipes
-		|| ipa_fmwk_ctx->ipa_qdss_disconn_pipes) {
-		pr_err("ipa_qdss APIs were already initialized\n");
-		return -EPERM;
-	}
-
-	ipa_fmwk_ctx->ipa_qdss_conn_pipes = in->ipa_qdss_conn_pipes;
-	ipa_fmwk_ctx->ipa_qdss_disconn_pipes = in->ipa_qdss_disconn_pipes;
-
-	pr_info("ipa_qdss registered successfully\n");
-
-	return 0;
-
-}
-EXPORT_SYMBOL(ipa_fmwk_register_ipa_qdss);
 
 /* registration API for IPA gsb module */
 int ipa_fmwk_register_gsb(const struct ipa_gsb_data *in)
@@ -1946,7 +1885,8 @@ int ipa_eth_register_ready_cb(struct ipa_eth_ready *ready_info)
 		mutex_unlock(&ipa_fmwk_ctx->lock);
 		return ret;
 	}
-	ipa_fmwk_ctx->eth_ready_info = ready_info;
+	ipa_fmwk_ctx->eth_ready_cb = ready_info->notify;
+	ipa_fmwk_ctx->eth_userdata = ready_info->userdata;
 	ready_info->is_eth_ready = false;
 	mutex_unlock(&ipa_fmwk_ctx->lock);
 

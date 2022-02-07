@@ -31,7 +31,6 @@ struct msm_ext_disp {
 	bool audio_session_on;
 	struct list_head display_list;
 	struct mutex lock;
-	bool update_audio;
 };
 
 static const unsigned int msm_ext_disp_supported_cable[] = {
@@ -289,6 +288,8 @@ static int msm_ext_disp_audio_config(struct platform_device *pdev,
 
 	if (state == EXT_DISPLAY_CABLE_CONNECT) {
 		ret = msm_ext_disp_select_audio_codec(pdev, codec);
+		if (ret)
+			pr_err("error setting audio codec\n");
 	} else {
 		mutex_lock(&ext_disp->lock);
 		if (ext_disp->ops)
@@ -392,14 +393,6 @@ int msm_ext_disp_register_audio_codec(struct platform_device *pdev,
 
 	pr_debug("audio codec registered\n");
 
-	if (ext_disp->update_audio) {
-		ext_disp->update_audio = false;
-		msm_ext_disp_update_audio_ops(ext_disp,
-				&ext_disp->current_codec);
-		msm_ext_disp_process_audio(ext_disp, &ext_disp->current_codec,
-				EXT_DISPLAY_CABLE_CONNECT);
-	}
-
 end:
 	mutex_unlock(&ext_disp->lock);
 	if (ext_disp->current_codec.type != EXT_DISPLAY_TYPE_MAX)
@@ -433,9 +426,7 @@ int msm_ext_disp_select_audio_codec(struct platform_device *pdev,
 	mutex_lock(&ext_disp->lock);
 
 	if (!ext_disp->ops) {
-		pr_warn("Codec is not registered\n");
-		ext_disp->update_audio = true;
-		ext_disp->current_codec = *codec;
+		pr_err("Codec is not registered\n");
 		ret = -EINVAL;
 		goto end;
 	}
@@ -625,7 +616,6 @@ static int msm_ext_disp_probe(struct platform_device *pdev)
 
 	INIT_LIST_HEAD(&ext_disp->display_list);
 	ext_disp->current_codec.type = EXT_DISPLAY_TYPE_MAX;
-	ext_disp->update_audio = false;
 
 	return ret;
 

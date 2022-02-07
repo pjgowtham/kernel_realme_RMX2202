@@ -459,7 +459,6 @@ struct fm_power_vreg_data {
 	/* voltage levels to be set */
 	unsigned int low_vol_level;
 	unsigned int high_vol_level;
-	int vdd_load;
 	/* is this regulator enabled? */
 	bool is_enabled;
 };
